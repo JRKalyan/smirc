@@ -12,8 +12,13 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("smirc", "src/main.zig");
+    exe.linkLibC();
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    exe.linkSystemLibrary("vulkan");
+    // TODO why do I need to link with vulkan when I'm using GLFW?
+    // Does that potentially break glfw since it finds vulkan loader dynamically?
+    exe.linkSystemLibrary("glfw");
     exe.install();
 
     const run_cmd = exe.run();
