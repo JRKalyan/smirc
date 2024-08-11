@@ -11,9 +11,11 @@ const vk = @import("vulkan_wrapper.zig");
 
 const font = @import("font.zig");
 
+const stf = @import("stf.zig");
+
 const U32MAX = 0xFFFFFFFF;
 const U64MAX = 0xFFFFFFFFFFFFFFFF;
-const DEBUG = true; // TODO how the hell do I do std.builtin.mode now?
+const DEBUG = true; // TODO how the heck do I do std.builtin.mode now?
 
 const Vertex = struct {
     colour: [3]f32,
@@ -176,6 +178,30 @@ fn recordCommandBuffer(
 
 pub fn main() anyerror!void {
     printn("😏");
+
+    // STF Tree testing:
+    {
+        const ascii = "prologue((asd) 123)";
+        var stfa: [ascii.len]u8 = undefined;
+        for (ascii) |byte, i| {
+            // special casing parentheses to be O0 and C0
+            print(byte);
+            if (byte == 40) {
+                stfa[i] = 126; // Open0
+            } else if (byte == 41) {
+                stfa[i] = 255; // Close
+            } else {
+                stfa[i] = stf.ascii_to_stfa(byte);
+            }
+            print(" Maps to: stfa[");
+            print(stfa[i]);
+            print("] which is: ");
+            printn(stf.stfa_to_ascii[stfa[i]]);
+        }
+        const test_parse = stf.parse(&stfa);
+        print("STF COUNT: ");
+        print(test_parse.items.len);
+    }
 
     var loop_count: u64 = 0;
 

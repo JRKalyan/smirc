@@ -1,6 +1,5 @@
 #version 450
 
-// TODO what's with the two names? struct def?
 layout (binding = 0) uniform TestName {
     vec2 scale;
 } transform;
@@ -13,7 +12,7 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColour;
 layout(location = 2) in vec2 inTexturePosition;
 
-layout(location = 0) out vec3 outColour; // TODO why don't we have to specify the output vars ahead of time?
+layout(location = 0) out vec3 outColour; 
 layout(location = 1) out vec2 outTexturePosition;
 
 void main() {

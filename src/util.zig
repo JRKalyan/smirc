@@ -1,7 +1,6 @@
 const std = @import("std");
 
 pub fn print(thing: anytype) void {
-    // todo if thing is string do this, if thing is int to the other thing
     const ThingType = @TypeOf(thing);
     switch (@typeInfo(ThingType)) {
         .Int => {
