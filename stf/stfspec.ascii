@@ -1,0 +1,23 @@
+STFA SPEC:
+==========
+- STF Alphabet has 125 'leaf' characters from byte layouts [0-125]
+- The first 32 byte layouts are leaf characters representing the numbers [0-31]
+- Following that are leaf characters for some printable ASCII characters:
+  beginning with a-z, followed by A-Z, followed by !@#$%^&+-*÷=_., |?/\~`:;\'()[]{}<>
+- Byte layouts [118-125] are for 8 SFTA unique characters:
+  the Oudenthorpe, Monothorpe, Duothorpe, Trithorpe, Tetrathorpe, Pentathorpe, Hexathorpe and the Heptathorpe
+- The remaining byte layouts [126-255] are 129 unique OPEN characters and the final byte is the CLOSE character
+
+STF SPEC
+========
+STF = Simple Tree Format
+A valid STF sequence of STFA characters abides by the following grammar:
+1) root -> contents
+2) contents -> EMPTY | LEAF contents | node contents
+3) node -> OPEN contents CLOSE
+
+- LEAF is any leaf character (below 126)
+- EMPTY is empty string
+- OPEN is any open character and CLOSE is the unique close character
+
+Adjacent LEAF characters coalesce into the contents of a  single node when an STF tree is parsed.
