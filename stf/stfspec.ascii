@@ -13,11 +13,13 @@ STF SPEC
 STF = Simple Tree Format
 A valid STF sequence of STFA characters abides by the following grammar:
 1) root -> contents
-2) contents -> EMPTY | LEAF contents | node contents
-3) node -> OPEN contents CLOSE
+2) contents -> EMPTY | label contents | node contents
+3) label -> EMPTY | LEAF label
+4) node -> OPEN contents CLOSE
+
 
 - LEAF is any leaf character (below 126)
 - EMPTY is empty string
 - OPEN is any open character and CLOSE is the unique close character
 
-Adjacent LEAF characters coalesce into the contents of a  single node when an STF tree is parsed.
+Adjacent LEAF characters coalesce into a single label.

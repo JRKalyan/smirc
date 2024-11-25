@@ -11,6 +11,6 @@
 // (compared to cache file information)
 
 int main(const int argc, const char** argv) {
-    system("gcc -Wall -Wextra -I -o Main src/*.c");
+    system("gcc -Wall -Wextra -o Main src/*.c");
     return 0;
 }
