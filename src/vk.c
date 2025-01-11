@@ -16,14 +16,17 @@ bool load_vulkan() {
         return false;
     }
 
-    // Lookup the fundamental functions
+    // TODO should be loading vkGetInstanceProcAddr and using that, no need for
+    // dlsym on the other ones.
     const char* err = dlerror();
-    vkCreateInstance = dlsym(s_shared_object, "vkCreateInstance");
+    vkGetInstanceProcAddr = dlsym(s_shared_object, "vkGetInstanceProcAddr");
     err = dlerror();
     if (err != NULL) {
         // TODO could propagate errmsg
         return false;
     }
+
+    vkCreateInstance = (PFN_vkCreateInstance)vkGetInstanceProcAddr(NULL, "vkCreateInstance");
 
     // Create instance
     // TODO ensure that I get missing field initializer warnings, and by practice always
@@ -39,18 +42,18 @@ bool load_vulkan() {
     };
 
     const VkInstanceCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .pApplicationInfo = &application_info,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = NULL,
+        .enabledExtensionCount = 0, // TODO
+        .ppEnabledExtensionNames = NULL,
     };
-    (void)create_info;
 
-    /* TODO
-    vkCreateInstance();
-
-    // TODO error check these as well, can make a macro to do this
-    vkGetInstanceProcAddr = dlsym(s_shared_object, "vkGetInstanceProcAddr");
-    vkEnumerateInstanceExtensionProperties = dlsym(s_shared_object, "vkEnumerateInstanceExtensionProperties");
-
-    */
-
+    VkInstance instance;
+    vkCreateInstance(&create_info, NULL, &instance);
 
     return true;
 }
