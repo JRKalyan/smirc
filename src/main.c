@@ -1,21 +1,28 @@
 #include <stdio.h>
+#include "context.h"
 #include "stf.h"
-#include "vk.h"
+#include "shader.h"
+
+// REMOVE
+#include <unistd.h>
+#include <stdlib.h>
 
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    if (load_vulkan())
-    {
-        // TODO
-        puts(stfa_to_ascii[STFA_MONOTHORPE]);
-
-        unload_vulkan();
+    Context context;
+    if (!context_init(&context)) {
+        puts(stfa_to_ascii[STFA_OUDENTHORPE]);
+        return EXIT_FAILURE;
     }
     else {
-        puts(stfa_to_ascii[STFA_OUDENTHORPE]);
+        for (int i = 0; i < 3; i++) {
+            puts(stfa_to_ascii[STFA_MONOTHORPE]);
+            context_sleep(&context, 300);
+        }
+        context_destroy(&context);
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

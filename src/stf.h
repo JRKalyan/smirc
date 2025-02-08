@@ -1,5 +1,5 @@
-#ifndef SMIRC_STF
-#define SMIRC_STF
+#ifndef SMIRC_STF_H
+#define SMIRC_STF_H
 
 #define STFA_LEN 256
 
