@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include "shader.h"
 
@@ -651,6 +652,36 @@ bool vulkan_device_context_init(
     SET_DEVICE_PROC_ADDR(vkDestroyImageView);
     SET_DEVICE_PROC_ADDR(vkCreateShaderModule);
     SET_DEVICE_PROC_ADDR(vkDestroyShaderModule);
+    SET_DEVICE_PROC_ADDR(vkCreateRenderPass);
+    SET_DEVICE_PROC_ADDR(vkDestroyRenderPass);
+    SET_DEVICE_PROC_ADDR(vkCreatePipelineLayout);
+    SET_DEVICE_PROC_ADDR(vkDestroyPipelineLayout);
+    SET_DEVICE_PROC_ADDR(vkCreateGraphicsPipelines);
+    SET_DEVICE_PROC_ADDR(vkDestroyPipeline);
+    SET_DEVICE_PROC_ADDR(vkCreateFramebuffer);
+    SET_DEVICE_PROC_ADDR(vkDestroyFramebuffer);
+    SET_DEVICE_PROC_ADDR(vkCreateCommandPool);
+    SET_DEVICE_PROC_ADDR(vkDestroyCommandPool);
+    SET_DEVICE_PROC_ADDR(vkAllocateCommandBuffers);
+    SET_DEVICE_PROC_ADDR(vkResetCommandBuffer);
+    SET_DEVICE_PROC_ADDR(vkBeginCommandBuffer);
+    SET_DEVICE_PROC_ADDR(vkEndCommandBuffer);
+    SET_DEVICE_PROC_ADDR(vkCmdBeginRenderPass);
+    SET_DEVICE_PROC_ADDR(vkCmdEndRenderPass);
+    SET_DEVICE_PROC_ADDR(vkCmdBindPipeline);
+    SET_DEVICE_PROC_ADDR(vkCmdSetViewport);
+    SET_DEVICE_PROC_ADDR(vkCmdSetScissor);
+    SET_DEVICE_PROC_ADDR(vkCmdDraw);
+    SET_DEVICE_PROC_ADDR(vkQueueSubmit);
+    SET_DEVICE_PROC_ADDR(vkAcquireNextImageKHR);
+    SET_DEVICE_PROC_ADDR(vkQueuePresentKHR);
+    SET_DEVICE_PROC_ADDR(vkWaitForFences);
+    SET_DEVICE_PROC_ADDR(vkCreateSemaphore);
+    SET_DEVICE_PROC_ADDR(vkDestroySemaphore);
+    SET_DEVICE_PROC_ADDR(vkCreateFence);
+    SET_DEVICE_PROC_ADDR(vkDestroyFence);
+    SET_DEVICE_PROC_ADDR(vkDeviceWaitIdle);
+    SET_DEVICE_PROC_ADDR(vkResetFences);
 
     device_context->vkGetDeviceQueue(
         device->logical_device,
@@ -882,7 +913,626 @@ void vulkan_swapchain_images_destroy(VulkanSwapchainImages* images) {
     free(images->image_view_list);
 }
 
-bool vulkan_graphics_pipeline_init() {
-    return true; // TODO
+bool vulkan_render_pass_init(
+    const VulkanDeviceContext *context,
+    const VulkanSwapchainImages *swapchain_images,
+    VulkanRenderPass* vk_render_pass)
+{
+    vk_render_pass->d_context = context;
+    vk_render_pass->d_swapchain_images = swapchain_images;
+
+    const VkAttachmentDescription attachment = {
+        .format = swapchain_images->d_swapchain->surface_format.format,
+        .samples = 1,
+        .flags = 0,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    };
+
+    const VkAttachmentReference attachment_reference = {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+    };
+
+    const VkSubpassDescription subpass = {
+        .flags = 0,
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachment_reference,
+        .pResolveAttachments = NULL,
+        .inputAttachmentCount = 0,
+        .pInputAttachments = NULL,
+        .preserveAttachmentCount = 0,
+        .pPreserveAttachments = NULL,
+        .pDepthStencilAttachment = NULL,
+    };
+
+
+    // TODO use synch2 & dynamic rendering
+    const VkSubpassDependency subpass_dependency = {
+      .dependencyFlags = 0,
+      .srcSubpass = VK_SUBPASS_EXTERNAL,
+      .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .srcAccessMask = 0,
+      .dstSubpass = 0,
+      .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    };
+
+    const VkRenderPassCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .attachmentCount = 1,
+        .pAttachments = &attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 0,
+        .pDependencies = NULL,
+    };
+
+    const VkResult result = context->vkCreateRenderPass(
+        context->d_device->logical_device,
+        &create_info,
+        context->d_device->d_vk->allocator,
+        &vk_render_pass->render_pass);
+
+    return result == VK_SUCCESS;
 }
-void vulkan_graphics_pipeline_destroy(); // TODO
+
+void vulkan_render_pass_destroy(
+    VulkanRenderPass* render_pass)
+{
+    const VulkanDeviceContext* context = render_pass->d_context;
+    context->vkDestroyRenderPass(
+        context->d_device->logical_device,
+        render_pass->render_pass,
+        context->d_device->d_vk->allocator);
+}
+
+bool vulkan_graphics_pipeline_init(
+    const VulkanDeviceContext* context,
+    const VulkanShaders* shaders,
+    const VulkanRenderPass* vk_render_pass,
+    VulkanGraphicsPipeline* graphics_pipeline) {
+
+    graphics_pipeline->d_context = context;
+
+    VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .setLayoutCount = 0,
+        .pSetLayouts = NULL,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = NULL,
+    };
+
+    const VkResult result = context->vkCreatePipelineLayout(
+        context->d_device->logical_device,
+        &pipeline_layout_create_info,
+        context->d_device->d_vk->allocator,
+        &graphics_pipeline->pipeline_layout);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo shader_create_infos[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = NULL,
+            .pName = "main",
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = shaders->vertex_shader,
+            .pSpecializationInfo = NULL,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = NULL,
+            .pName = "main",
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = shaders->fragment_shader,
+            .pSpecializationInfo = NULL,
+        },
+    };
+
+    const VkDynamicState dynamic_state[2] = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamic_state_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .dynamicStateCount = 2,
+        .pDynamicStates = dynamic_state,
+        .flags = 0,
+    };
+
+    VkPipelineVertexInputStateCreateInfo vertex_input_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = NULL,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = NULL,
+    };
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = false,
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_state_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .scissorCount = 1,
+        .pScissors = NULL, // dynamic
+        .viewportCount = 1,
+        .pViewports = NULL, // dynamic
+    };
+
+    VkPipelineRasterizationStateCreateInfo rasterization_state_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = VK_FALSE,
+        .depthBiasConstantFactor = 0,
+        .depthBiasClamp = 0,
+        .depthBiasSlopeFactor = 0,
+        .lineWidth = 1.0,
+    };
+
+    VkPipelineMultisampleStateCreateInfo multisample_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = NULL,
+        .sampleShadingEnable = VK_FALSE,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .minSampleShading = 1.0,
+        .pSampleMask = NULL,
+        .alphaToCoverageEnable = VK_FALSE,
+        .alphaToOneEnable = VK_FALSE,
+    };
+
+    VkPipelineColorBlendAttachmentState colour_blend_attachment_state = {
+        .colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT,
+        .blendEnable = VK_FALSE,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+    };
+
+    VkPipelineColorBlendStateCreateInfo colour_blend_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .flags = 0,
+        .logicOpEnable = VK_FALSE,
+        .logicOp = VK_LOGIC_OP_COPY,
+        .blendConstants = {0},
+        .attachmentCount = 1,
+        .pAttachments = &colour_blend_attachment_state,
+    };
+
+    VkGraphicsPipelineCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = NULL,
+        .stageCount = 2,
+        .pStages = shader_create_infos,
+        .pColorBlendState = &colour_blend_info,
+        .pDepthStencilState = NULL,
+        .pDynamicState = &dynamic_state_create_info,
+        .pInputAssemblyState = &input_assembly_create_info,
+        .pVertexInputState = &vertex_input_create_info,
+        .pMultisampleState = &multisample_info,
+        .pRasterizationState = &rasterization_state_create_info,
+        .pViewportState = &viewport_state_create_info,
+        .pTessellationState = NULL,
+        .renderPass = vk_render_pass->render_pass,
+        .subpass = 0,
+        .layout = graphics_pipeline->pipeline_layout,
+        .basePipelineHandle = NULL,
+        .basePipelineIndex = -1,
+    };
+
+    context->vkCreateGraphicsPipelines(
+        context->d_device->logical_device,
+        VK_NULL_HANDLE,
+        1,
+        &create_info,
+        context->d_device->d_vk->allocator,
+        &graphics_pipeline->graphics_pipeline);
+
+    return true;
+}
+
+void vulkan_graphics_pipeline_destroy(
+    VulkanGraphicsPipeline* graphics_pipeline) {
+    const VulkanDeviceContext* context = graphics_pipeline->d_context;
+    context->vkDestroyPipeline(
+        context->d_device->logical_device,
+        graphics_pipeline->graphics_pipeline,
+        context->d_device->d_vk->allocator);
+    context->vkDestroyPipelineLayout(
+        context->d_device->logical_device,
+        graphics_pipeline->pipeline_layout, 
+        context->d_device->d_vk->allocator);
+}
+
+bool vulkan_framebuffers_init(
+    const VulkanRenderPass* render_pass,
+    VulkanFramebuffers* vk_framebuffers)
+{
+    const VulkanDeviceContext* context = render_pass->d_context;
+    const VulkanSwapchainImages* swapchain_images = render_pass->d_swapchain_images;
+    const uint32_t image_count = swapchain_images->image_count;
+    vk_framebuffers->d_swapchain_images = swapchain_images;
+    vk_framebuffers->d_render_pass = render_pass;
+    vk_framebuffers->d_context = context;
+    vk_framebuffers->framebuffer_count = 0;
+
+    const VkExtent2D image_extent = swapchain_images->d_swapchain->image_extent;
+
+    for (uint32_t i = 0; i < image_count; i++) {
+        VkImageView image_view = swapchain_images->image_view_list[i];
+
+        const VkFramebufferCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+            .renderPass = render_pass->render_pass,
+            .attachmentCount = 1,
+            .pAttachments = &image_view,
+            .width = image_extent.width,
+            .height = image_extent.height,
+            .layers = 1,
+        };
+
+        // Question: why do width, height, layers need to be specified
+        // when the image view should maintain that information already?
+        // What happens if they disagree?
+
+        const VkResult result = context->vkCreateFramebuffer(
+            context->d_device->logical_device,
+            &create_info,
+            context->d_device->d_vk->allocator,
+            vk_framebuffers->framebuffers + i);
+            
+        if (result != VK_SUCCESS) {
+            // Destroy previously created framebuffers up to framebuffer count
+            vulkan_framebuffers_destroy(vk_framebuffers);
+            return false;
+        }
+        else {
+            vk_framebuffers->framebuffer_count += 1;
+        }
+    }
+
+    return true;
+}
+
+void vulkan_framebuffers_destroy(VulkanFramebuffers* vk_framebuffers)
+{
+    const PFN_vkDestroyFramebuffer vkDestroyFramebuffer =
+        vk_framebuffers->
+        d_context->
+        vkDestroyFramebuffer;
+    for (uint32_t i = 0; i < vk_framebuffers->framebuffer_count; i++) {
+        vkDestroyFramebuffer(
+            vk_framebuffers->d_context->d_device->logical_device,
+            vk_framebuffers->framebuffers[i],
+            vk_framebuffers->d_context->d_device->d_vk->allocator);
+    }
+}
+
+void vulkan_commands_destroy(
+    const VulkanDeviceContext* context,
+    VulkanCommands* commands)
+{
+    context->vkDestroyCommandPool(
+        context->d_device->logical_device,
+        commands->command_pool,
+        context->d_device->d_vk->allocator);
+}
+
+bool vulkan_commands_init(
+    const VulkanDeviceContext* context,
+    VulkanCommands* commands)
+{
+    const VkCommandPoolCreateInfo pool_create_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = NULL,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = context->d_device->graphics_family_index,
+    };
+    const VkResult command_result = context->vkCreateCommandPool(
+        context->d_device->logical_device,
+        &pool_create_info,
+        context->d_device->d_vk->allocator,
+        &commands->command_pool);
+
+    if (command_result != VK_SUCCESS) {
+        return false;
+    }
+
+    // Command Buffers
+
+    const VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = NULL,
+        .commandPool = commands->command_pool,
+        .commandBufferCount = 1,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY
+    };
+
+    const VkResult buffer_result = context->vkAllocateCommandBuffers(
+        context->d_device->logical_device,
+        &alloc_info,
+        &commands->command_buffer);
+
+    if (buffer_result != VK_SUCCESS) {
+        vulkan_commands_destroy(context, commands);
+        return false;
+    }
+
+    return true;
+}
+
+bool vulkan_sync_objects_init(
+    const VulkanDeviceContext* context,
+    VulkanSyncObjects* sync_objects)
+{
+    VkDevice device = context->d_device->logical_device;
+    const VkAllocationCallbacks* allocator = context->d_device->d_vk->allocator;
+
+    sync_objects->image_acquired = VK_NULL_HANDLE;
+    sync_objects->draw_finished = VK_NULL_HANDLE;
+    sync_objects->command_buffer_available = VK_NULL_HANDLE;
+
+    const VkSemaphoreCreateInfo semaphore_create_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+    };
+
+    VkResult result = context->vkCreateSemaphore(
+        device,
+        &semaphore_create_info,
+        allocator,
+        &sync_objects->image_acquired);
+
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    result = context->vkCreateSemaphore(
+        device,
+        &semaphore_create_info,
+        allocator,
+        &sync_objects->draw_finished);
+
+    if (result != VK_SUCCESS) {
+        vulkan_sync_objects_destroy(context, sync_objects);
+        return false;
+    }
+
+    const VkFenceCreateInfo fence_create_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        .pNext = NULL,
+    };
+    result = context->vkCreateFence(
+        device,
+        &fence_create_info,
+        allocator,
+        &sync_objects->command_buffer_available);
+
+    if (result != VK_SUCCESS) {
+        vulkan_sync_objects_destroy(context, sync_objects);
+        return false;
+    }
+
+    return true;
+}
+
+void vulkan_sync_objects_destroy(
+    const VulkanDeviceContext* context,
+    VulkanSyncObjects* sync_objects)
+{
+    VkDevice device = context->d_device->logical_device;
+    const VkAllocationCallbacks* allocator = context->d_device->d_vk->allocator;
+
+    context->vkDestroySemaphore(
+        device,
+        sync_objects->image_acquired,
+        allocator);
+
+    if (sync_objects->draw_finished == VK_NULL_HANDLE) {
+        return;
+    }
+
+    context->vkDestroySemaphore(
+        device,
+        sync_objects->draw_finished,
+        allocator);
+
+    if (sync_objects->command_buffer_available == VK_NULL_HANDLE) {
+        return;
+    }
+
+    context->vkDestroyFence(
+        device,
+        sync_objects->command_buffer_available,
+        allocator);
+}
+
+
+bool vulkan_draw_mutate(
+    const VulkanDeviceContext* context,
+    const VulkanSwapchain* vk_swapchain,
+    const VulkanGraphicsPipeline* vk_graphics_pipeline,
+    const VulkanCommands* commands,
+    const VulkanSyncObjects* sync,
+    const VulkanFramebuffers* framebuffers)
+{
+    VkResult result;
+    // Wait for available command buffer
+    VkDevice device = context->d_device->logical_device;
+    context->vkWaitForFences(
+        device,
+        1,
+        &sync->command_buffer_available,
+        VK_TRUE,
+        INT_MAX);
+
+    context->vkResetFences(
+        device,
+        1,
+        &sync->command_buffer_available);
+
+    // Request image for drawing
+    uint32_t image_index;
+    result = context->vkAcquireNextImageKHR(
+        device,
+        vk_swapchain->swapchain,
+        INT_MAX,
+        sync->image_acquired,
+        VK_NULL_HANDLE,
+        &image_index);
+
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    // Record Command buffer:
+    VkCommandBuffer command_buffer = commands->command_buffer;
+    context->vkResetCommandBuffer(command_buffer, 0);
+
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .pInheritanceInfo = NULL,
+    };
+    context->vkBeginCommandBuffer(command_buffer, &begin_info);
+    {
+        VkClearValue clear_value = {
+            .color = { .int32 = {0, 0, 0, 0} },
+        };
+        const VkRenderPassBeginInfo render_begin_info = {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .pNext = NULL,
+            .renderPass = framebuffers->d_render_pass->render_pass,
+            .renderArea = { .extent = vk_swapchain->image_extent },
+            .framebuffer = framebuffers->framebuffers[image_index],
+            .clearValueCount = 1,
+            .pClearValues = &clear_value, 
+        };
+        context->vkCmdBeginRenderPass(
+            command_buffer,
+            &render_begin_info,
+            VK_SUBPASS_CONTENTS_INLINE);
+
+        context->vkCmdBindPipeline(
+            command_buffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vk_graphics_pipeline->graphics_pipeline);
+
+        const VkRect2D scissor_rect = {
+            .extent = vk_swapchain->image_extent,
+            .offset = { .x = 0, .y = 0 },
+        };
+
+        context->vkCmdSetScissor(
+            command_buffer,
+            0,
+            1,
+            &scissor_rect);
+
+        const VkViewport viewport = {
+            .x = 0,
+            .y = 0,
+            .width = (float)vk_swapchain->image_extent.width,
+            .height = (float)vk_swapchain->image_extent.height,
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+        context->vkCmdSetViewport(
+            command_buffer,
+            0,
+            1,
+            &viewport);
+
+        context->vkCmdDraw(
+            command_buffer,
+            3,  // vertexCount
+            1,  // indexCount
+            0,  // firstVertex
+            0); // firstInstance
+
+        context->vkCmdEndRenderPass(command_buffer);
+    }
+    context->vkEndCommandBuffer(command_buffer);
+
+    // Submission
+
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = NULL,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sync->image_acquired,
+        .pWaitDstStageMask = &wait_stage,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &sync->draw_finished,
+    };
+    result = context->vkQueueSubmit(
+        context->d_graphics_queue,
+        1,
+        &submit_info,
+        sync->command_buffer_available);
+
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    const VkPresentInfoKHR present_info = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext = NULL,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sync->draw_finished,
+        .pResults = NULL,
+        .swapchainCount = 1,
+        .pSwapchains = &vk_swapchain->swapchain,
+        .pImageIndices = &image_index,
+    };
+    result = context->vkQueuePresentKHR(
+        context->d_present_queue,
+        &present_info);
+
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    return true;
+}

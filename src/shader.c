@@ -30,6 +30,9 @@
 // to the slang compiler API is desirable for now.
 
 #include <glslang/Include/glslang_c_interface.h>
+
+// TODO are defaults fine? Should I be pulling from device information to
+// compile shaders optimally?
 #include <glslang/Public/resource_limits_c.h>
 
 #include <stdio.h>

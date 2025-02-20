@@ -17,9 +17,10 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     else {
-        for (int i = 0; i < 3; i++) {
-            puts(stfa_to_ascii[STFA_MONOTHORPE]);
-            context_sleep(&context, 300);
+        puts(stfa_to_ascii[STFA_MONOTHORPE]);
+        const bool result = context_draw(&context);
+        if (result) {
+            context_sleep(&context, 600);
         }
         context_destroy(&context);
     }

@@ -5,10 +5,15 @@
 
 #include <stdlib.h>
 
+// REMOVE
+#include <time.h>
+#include <stdio.h>
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
 #include "vk.h"
+
 
 bool context_session_init(ContextSession session) {
     (void)session;
@@ -284,16 +289,192 @@ void LINKVulkanSwapchainImages_destroy(LINKVulkanSwapchainImages* link) {
     LINKVulkanSwapchain_destroy(&link->l_swapchain);
 }
 
+bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link) {
+    if (LINKVulkanSwapchainImages_init(&link->l_swapchain_images) == false) {
+        return false;
+    }
+
+    const VulkanDeviceContext* context = &link->l_swapchain_images
+        .l_swapchain
+        .l_shaders
+        .l_device_context
+        .device_context;
+
+    const bool result = vulkan_render_pass_init(
+        context,
+        &link->l_swapchain_images.swapchain_images,
+        &link->render_pass);
+
+    if (result == false) {
+        LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images);
+    }
+
+    return result;
+}
+
+void LINKVulkanRenderPass_destroy(LINKVulkanRenderPass* link) {
+    vulkan_render_pass_destroy(&link->render_pass);
+    LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images);
+}
+
+bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link) {
+    if (LINKVulkanRenderPass_init(&link->l_render_pass) == false) {
+        return false;
+    }
+
+    const LINKVulkanShaders* l_shaders = &link->l_render_pass
+        .l_swapchain_images
+        .l_swapchain
+        .l_shaders;
+    const VulkanDeviceContext* context = &l_shaders->l_device_context
+        .device_context;
+    const bool result = vulkan_graphics_pipeline_init(
+        context,
+        &l_shaders->shaders,
+        &link->l_render_pass.render_pass,
+        &link->pipeline);
+
+    if (result == false) {
+        LINKVulkanRenderPass_destroy(&link->l_render_pass);
+    }
+
+    return result;
+}
+
+void LINKVulkanGraphicsPipeline_destroy(LINKVulkanGraphicsPipeline* link) {
+    vulkan_graphics_pipeline_destroy(&link->pipeline);
+    LINKVulkanRenderPass_destroy(&link->l_render_pass);
+}
+
+
+bool LINKVulkanFramebuffers_init(LINKVulkanFramebuffers* link) {
+    if (LINKVulkanGraphicsPipeline_init(&link->l_graphics_pipeline) == false) {
+        return false;
+    }
+
+    const VulkanRenderPass* vk_render_pass = &link->l_graphics_pipeline.l_render_pass.render_pass;
+    const bool result = vulkan_framebuffers_init(
+        vk_render_pass,
+        &link->vk_framebuffers);
+
+    if (result == false) {
+        LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline);
+    }
+
+    return result;
+}
+
+void LINKVulkanFramebuffers_destroy(LINKVulkanFramebuffers* link) {
+    vulkan_framebuffers_destroy(&link->vk_framebuffers);
+    LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline);
+}
+
+bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link) {
+    if (LINKVulkanFramebuffers_init(&link->l_framebuffers) == false) {
+        return false;
+    }
+
+    const bool result = vulkan_sync_objects_init(
+        link->l_framebuffers.vk_framebuffers.d_context,
+        &link->sync_objects);
+
+    if (result == false) {
+        LINKVulkanFramebuffers_destroy(&link->l_framebuffers);
+    }
+    return result;
+}
+
+void LINKVulkanSyncObjects_destroy(LINKVulkanSyncObjects* link) {
+    vulkan_sync_objects_destroy(
+        link->l_framebuffers.vk_framebuffers.d_context,
+        &link->sync_objects);
+    LINKVulkanFramebuffers_destroy(&link->l_framebuffers);
+}
+
+bool LINKVulkanCommands_init(LINKVulkanCommands* link) {
+    if (LINKVulkanSyncObjects_init(&link->l_sync_objects) == false) {
+        return false;
+    }
+
+    const bool result = vulkan_commands_init(
+        link->l_sync_objects.l_framebuffers.vk_framebuffers.d_context,
+        &link->commands);
+
+    if (result == false) {
+        LINKVulkanSyncObjects_destroy(&link->l_sync_objects);
+    }
+
+    return result;
+}
+
+void LINKVulkanCommands_destroy(LINKVulkanCommands* link) {
+    vulkan_commands_destroy(
+        link->l_sync_objects.l_framebuffers.vk_framebuffers.d_context,
+        &link->commands);
+        LINKVulkanSyncObjects_destroy(&link->l_sync_objects);
+}
 
 bool context_init(Context* context) {
-    return LINKVulkanSwapchainImages_init(context);
+    return LINKVulkanCommands_init(context);
 }
 
 void context_destroy(Context* context) {
-    LINKVulkanSwapchainImages_destroy(context);
+    LINKVulkanCommands_destroy(context);
 }
 
 void context_sleep(Context* context, uint32_t ms) {
     (void)context;
     SDL_Delay(ms);
 }
+
+bool context_draw(Context* context) {
+    const VulkanDeviceContext* device_context = context->l_sync_objects
+        .l_framebuffers
+        .vk_framebuffers.d_context;
+    const VulkanGraphicsPipeline* graphics_pipeline = &context->l_sync_objects
+        .l_framebuffers
+        .l_graphics_pipeline
+        .pipeline;
+    const VulkanSwapchain* swapchain = &context->l_sync_objects
+        .l_framebuffers
+        .l_graphics_pipeline
+        .l_render_pass
+        .l_swapchain_images
+        .l_swapchain
+        .vk_swapchain;
+    const VulkanCommands* commands = &context->commands;
+    const VulkanSyncObjects* sync_objects = &context->l_sync_objects
+        .sync_objects;
+    const VulkanFramebuffers* framebuffers = &context->l_sync_objects
+        .l_framebuffers
+        .vk_framebuffers;
+
+    uint32_t i = 0;
+    clock_t start = clock();
+    #define NUM_FRAMES_TIMED 200
+    while (i < NUM_FRAMES_TIMED) {
+        const bool result = vulkan_draw_mutate(
+            device_context,
+            swapchain,
+            graphics_pipeline,
+            commands,
+            sync_objects,
+            framebuffers);
+        if (result == false) {
+            device_context->vkDeviceWaitIdle(device_context->d_device->logical_device);
+            return false;
+        }
+        i++;
+    }
+    clock_t elapsed = clock() - start;
+    double timer = (double)elapsed / CLOCKS_PER_SEC;
+    printf("FRAME COUNT: %d frames\n", NUM_FRAMES_TIMED);
+    printf("TOTAL TIME:  %.3f sec\n", timer);
+    printf("FRAME RATE:  %.3f fps\n", NUM_FRAMES_TIMED / timer);
+    printf("FRAME TIME:  %.3f ms\n", (timer * 1000) / NUM_FRAMES_TIMED);
+
+    device_context->vkDeviceWaitIdle(device_context->d_device->logical_device);
+
+    return true;
+}
+

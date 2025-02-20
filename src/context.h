@@ -87,13 +87,40 @@ typedef struct {
     VulkanSwapchainImages swapchain_images;
 } LINKVulkanSwapchainImages;
 
-typedef LINKVulkanSwapchainImages Context;
+typedef struct {
+    LINKVulkanSwapchainImages l_swapchain_images;
+    VulkanRenderPass render_pass;
+} LINKVulkanRenderPass;
+
+typedef struct {
+    LINKVulkanRenderPass l_render_pass;
+    VulkanGraphicsPipeline pipeline;
+} LINKVulkanGraphicsPipeline;
+
+typedef struct {
+    LINKVulkanGraphicsPipeline l_graphics_pipeline;
+    VulkanFramebuffers vk_framebuffers;
+} LINKVulkanFramebuffers;
+
+typedef struct {
+    LINKVulkanFramebuffers l_framebuffers;
+    VulkanSyncObjects sync_objects;
+} LINKVulkanSyncObjects;
+
+typedef struct {
+    LINKVulkanSyncObjects l_sync_objects;
+    VulkanCommands commands;
+} LINKVulkanCommands;
+
+typedef LINKVulkanCommands Context;
 
 bool context_init(Context* context);
 
 void context_destroy(Context* context);
 
 void context_sleep(Context* context, uint32_t ms);
+
+bool context_draw(Context* context);
 
 // TODO logging
 
