@@ -102,10 +102,13 @@ typedef struct {
     VulkanFramebuffers vk_framebuffers;
 } LINKVulkanFramebuffers;
 
+// TODO this could be made earlier, avoid remaking for swapchain
+// This is another reason to move to DAG instead of chain
+// for init, on top of flexibility for choosing what to init
 typedef struct {
     LINKVulkanFramebuffers l_framebuffers;
     VulkanSyncObjects sync_objects;
-} LINKVulkanSyncObjects;
+} LINKVulkanSyncObjects; 
 
 typedef struct {
     LINKVulkanSyncObjects l_sync_objects;

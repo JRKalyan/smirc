@@ -1,10 +1,13 @@
 #include "vk.h"
 
+#include <stdio.h> // TODO REMOVE
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <vulkan/vulkan_core.h>
 
 #include "shader.h"
+
 
 #define GET_INSTANCE_PROC_ADDR(name) \
     (PFN_##name)vk_info->vkGetInstanceProcAddr(vk->instance, #name)
@@ -239,12 +242,7 @@ bool vulkan_device_surface_compat_init(
     const VkSurfaceKHR surface,
     VulkanDeviceSurfaceCompat* compat) {
 
-    VkResult result = vk->vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-        physical_device,
-        surface,
-        &compat->surface_capabilities);
-
-    result = vk->vkGetPhysicalDeviceSurfaceFormatsKHR(
+    VkResult result = vk->vkGetPhysicalDeviceSurfaceFormatsKHR(
         physical_device,
         surface, 
         &compat->surface_format_count,
@@ -582,6 +580,8 @@ bool vulkan_device_init(
         return false;
     }
 
+
+    printf("DEVICE: %s\n", device->d_device_description->device_properties.deviceName);
     // Create logical device
 
     // Queue Creation
@@ -733,15 +733,27 @@ bool vulkan_swapchain_init(
 
     const VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
 
-    const VkSurfaceCapabilitiesKHR* capabilities = &desc->maybe_compat.surface_capabilities;
-    vk_swapchain->image_extent = capabilities->currentExtent;
+    VkSurfaceCapabilitiesKHR capabilities;
+    VkResult result = vk->vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        device->d_physical_device,
+        surface,
+        &capabilities);
 
-    const uint32_t max_image_count = MAX_IMAGE < capabilities->maxImageCount
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    vk_swapchain->image_extent = capabilities.currentExtent;
+
+    printf("WIDTH: %d HEIGHT: %d\n", capabilities.currentExtent.width, capabilities.currentExtent.height);
+    // TODO this is not updating with window size update.... what is the point of even using it?
+
+    const uint32_t max_image_count = MAX_IMAGE < capabilities.maxImageCount
         ? MAX_IMAGE
-        : capabilities->maxImageCount;
-    const uint32_t image_count = capabilities->minImageCount < max_image_count
-        ? capabilities->minImageCount + 1
-        : capabilities->minImageCount;
+        : capabilities.maxImageCount;
+    const uint32_t image_count = capabilities.minImageCount < max_image_count
+        ? capabilities.minImageCount + 1
+        : capabilities.minImageCount;
 
     if (vk_swapchain->image_extent.width == 0 || vk_swapchain->image_extent.height == 0) {
         // Window may be minimized, can't abide by valid usage with zero
@@ -773,14 +785,14 @@ bool vulkan_swapchain_init(
         .imageSharingMode = multi_queue ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = multi_queue ? 2 : 0,
         .pQueueFamilyIndices = queue_family_indices,
-        .preTransform = capabilities->currentTransform,
+        .preTransform = capabilities.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = present_mode,
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE,
     };
 
-    VkResult result = context->vkCreateSwapchainKHR(
+    result = context->vkCreateSwapchainKHR(
         device->logical_device,
         &create_info,
         vk->allocator,
@@ -928,7 +940,7 @@ bool vulkan_render_pass_init(
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE, // TODO this is a bug
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
     };
@@ -971,8 +983,8 @@ bool vulkan_render_pass_init(
         .pAttachments = &attachment,
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = 0,
-        .pDependencies = NULL,
+        .dependencyCount = 1,
+        .pDependencies = &subpass_dependency,
     };
 
     const VkResult result = context->vkCreateRenderPass(
@@ -1257,6 +1269,7 @@ bool vulkan_commands_init(
     const VulkanDeviceContext* context,
     VulkanCommands* commands)
 {
+    // TODO 
     const VkCommandPoolCreateInfo pool_create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = NULL,
@@ -1279,14 +1292,14 @@ bool vulkan_commands_init(
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = NULL,
         .commandPool = commands->command_pool,
-        .commandBufferCount = 1,
+        .commandBufferCount = NUM_ACTIVE_BATCHES,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY
     };
 
     const VkResult buffer_result = context->vkAllocateCommandBuffers(
         context->d_device->logical_device,
         &alloc_info,
-        &commands->command_buffer);
+        commands->command_buffers);
 
     if (buffer_result != VK_SUCCESS) {
         vulkan_commands_destroy(context, commands);
@@ -1303,51 +1316,55 @@ bool vulkan_sync_objects_init(
     VkDevice device = context->d_device->logical_device;
     const VkAllocationCallbacks* allocator = context->d_device->d_vk->allocator;
 
-    sync_objects->image_acquired = VK_NULL_HANDLE;
-    sync_objects->draw_finished = VK_NULL_HANDLE;
-    sync_objects->command_buffer_available = VK_NULL_HANDLE;
-
     const VkSemaphoreCreateInfo semaphore_create_info = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
     };
 
-    VkResult result = context->vkCreateSemaphore(
-        device,
-        &semaphore_create_info,
-        allocator,
-        &sync_objects->image_acquired);
-
-    if (result != VK_SUCCESS) {
-        return false;
-    }
-
-    result = context->vkCreateSemaphore(
-        device,
-        &semaphore_create_info,
-        allocator,
-        &sync_objects->draw_finished);
-
-    if (result != VK_SUCCESS) {
-        vulkan_sync_objects_destroy(context, sync_objects);
-        return false;
-    }
-
     const VkFenceCreateInfo fence_create_info = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         .pNext = NULL,
     };
-    result = context->vkCreateFence(
-        device,
-        &fence_create_info,
-        allocator,
-        &sync_objects->command_buffer_available);
 
-    if (result != VK_SUCCESS) {
-        vulkan_sync_objects_destroy(context, sync_objects);
-        return false;
+    for (uint32_t i = 0; i < NUM_ACTIVE_BATCHES; i++) {
+
+        sync_objects->image_acquired[i] = VK_NULL_HANDLE;
+        VkResult result = context->vkCreateSemaphore(
+            device,
+            &semaphore_create_info,
+            allocator,
+            &sync_objects->image_acquired[i]);
+
+        if (result != VK_SUCCESS) {
+            vulkan_sync_objects_destroy(context, sync_objects);
+            return false;
+        }
+
+        sync_objects->draw_finished[i] = VK_NULL_HANDLE;
+        result = context->vkCreateSemaphore(
+            device,
+            &semaphore_create_info,
+            allocator,
+            &sync_objects->draw_finished[i]);
+
+        if (result != VK_SUCCESS) {
+            vulkan_sync_objects_destroy(context, sync_objects);
+            return false;
+        }
+
+        sync_objects->command_buffer_available[i] = VK_NULL_HANDLE;
+        result = context->vkCreateFence(
+            device,
+            &fence_create_info,
+            allocator,
+            &sync_objects->command_buffer_available[i]);
+
+        if (result != VK_SUCCESS) {
+            vulkan_sync_objects_destroy(context, sync_objects);
+            return false;
+        }
     }
 
     return true;
@@ -1360,28 +1377,37 @@ void vulkan_sync_objects_destroy(
     VkDevice device = context->d_device->logical_device;
     const VkAllocationCallbacks* allocator = context->d_device->d_vk->allocator;
 
-    context->vkDestroySemaphore(
-        device,
-        sync_objects->image_acquired,
-        allocator);
+    for (uint32_t i = 0; i < NUM_ACTIVE_BATCHES; i++) {
 
-    if (sync_objects->draw_finished == VK_NULL_HANDLE) {
-        return;
+        if (sync_objects->image_acquired[i] == VK_NULL_HANDLE) {
+            return;
+        }
+
+        context->vkDestroySemaphore(
+            device,
+            sync_objects->image_acquired[i],
+            allocator);
+
+        if (sync_objects->draw_finished[i] == VK_NULL_HANDLE) {
+            return;
+        }
+
+        context->vkDestroySemaphore(
+            device,
+            sync_objects->draw_finished[i],
+            allocator);
+
+        if (sync_objects->command_buffer_available[i] == VK_NULL_HANDLE) {
+            return;
+        }
+
+        context->vkDestroyFence(
+            device,
+            sync_objects->command_buffer_available[i],
+            allocator);
+
     }
 
-    context->vkDestroySemaphore(
-        device,
-        sync_objects->draw_finished,
-        allocator);
-
-    if (sync_objects->command_buffer_available == VK_NULL_HANDLE) {
-        return;
-    }
-
-    context->vkDestroyFence(
-        device,
-        sync_objects->command_buffer_available,
-        allocator);
 }
 
 
@@ -1399,14 +1425,14 @@ bool vulkan_draw_mutate(
     context->vkWaitForFences(
         device,
         1,
-        &sync->command_buffer_available,
+        &sync->command_buffer_available[0],
         VK_TRUE,
         INT_MAX);
 
     context->vkResetFences(
         device,
         1,
-        &sync->command_buffer_available);
+        &sync->command_buffer_available[0]);
 
     // Request image for drawing
     uint32_t image_index;
@@ -1414,7 +1440,7 @@ bool vulkan_draw_mutate(
         device,
         vk_swapchain->swapchain,
         INT_MAX,
-        sync->image_acquired,
+        sync->image_acquired[0],
         VK_NULL_HANDLE,
         &image_index);
 
@@ -1422,8 +1448,10 @@ bool vulkan_draw_mutate(
         return false;
     }
 
+    context->vkDeviceWaitIdle(context->d_device->logical_device);
+
     // Record Command buffer:
-    VkCommandBuffer command_buffer = commands->command_buffer;
+    VkCommandBuffer command_buffer = commands->command_buffers[0];
     context->vkResetCommandBuffer(command_buffer, 0);
 
     const VkCommandBufferBeginInfo begin_info = {
@@ -1501,16 +1529,18 @@ bool vulkan_draw_mutate(
         .commandBufferCount = 1,
         .pCommandBuffers = &command_buffer,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sync->image_acquired,
+        .pWaitSemaphores = &sync->image_acquired[0],
         .pWaitDstStageMask = &wait_stage,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &sync->draw_finished,
+        .pSignalSemaphores = &sync->draw_finished[0],
     };
     result = context->vkQueueSubmit(
         context->d_graphics_queue,
         1,
         &submit_info,
-        sync->command_buffer_available);
+        sync->command_buffer_available[0]);
+
+    context->vkDeviceWaitIdle(context->d_device->logical_device);
 
     if (result != VK_SUCCESS) {
         return false;
@@ -1520,7 +1550,7 @@ bool vulkan_draw_mutate(
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext = NULL,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sync->draw_finished,
+        .pWaitSemaphores = &sync->draw_finished[0],
         .pResults = NULL,
         .swapchainCount = 1,
         .pSwapchains = &vk_swapchain->swapchain,
@@ -1533,6 +1563,8 @@ bool vulkan_draw_mutate(
     if (result != VK_SUCCESS) {
         return false;
     }
+
+    context->vkDeviceWaitIdle(context->d_device->logical_device);
 
     return true;
 }

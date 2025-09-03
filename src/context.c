@@ -1,4 +1,6 @@
 #include "context.h"
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_video.h>
 
 #define TITLE "SMIRC"
 #define VERSION "0.0.0"
@@ -14,11 +16,30 @@
 
 #include "vk.h"
 
+typedef enum LINKType {
+    LINK_NONE,
+    LINK_SWAPCHAIN,
+} LINKType;
+
+// TODO, this only exists temporarily for visualizing
+// what should be generated code based on dependency
+// specification.
+// LINKSwapchain functions below show an example of what it can be
+// replaced with when needing to recreate a node in the
+// dependency graph (chain for now). I don't want to specify these
+// manually when recreation of some of these nodes is unnecessary
+// for now, so this is a standin that will be false.
+#define STOP_HERE(stop) (stop != stop)
+
 
 bool context_session_init(ContextSession session) {
     (void)session;
 
     SDL_SetAppMetadata(TITLE, VERSION, "");
+
+    if (SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1") == false) {
+        return false;
+    }
 
     const SDL_InitFlags init_flags = SDL_INIT_VIDEO;
     return SDL_Init(init_flags);
@@ -29,48 +50,56 @@ void context_session_destroy(ContextSession session) {
     SDL_Quit();
 }
 
-bool LINKWindow_init(LINKWindow* link) {
-    if (context_session_init(link->session) == false) {
+bool LINKWindow_init(LINKWindow* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && context_session_init(link->session) == false) {
         return false;
     }
 
-    const SDL_WindowFlags window_flags = SDL_WINDOW_VULKAN;
+    const SDL_WindowFlags window_flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
     link->window = SDL_CreateWindow(TITLE, 500, 500, window_flags);
     if (link->window == NULL) {
-        context_session_destroy(link->session);
+        if (STOP_HERE(stop) == false) {
+            context_session_destroy(link->session);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKWindow_destroy(LINKWindow* link) {
+void LINKWindow_destroy(LINKWindow* link, LINKType stop) {
     SDL_DestroyWindow(link->window);
-    context_session_destroy(link->session);
+    if (STOP_HERE(stop) == false) {
+        context_session_destroy(link->session);
+    }
 }
 
-bool LINKGetInstanceProcAddr_init(LINKGetInstanceProcAddr* link) {
-    if (LINKWindow_init(&link->l_window) == false) {
+bool LINKGetInstanceProcAddr_init(LINKGetInstanceProcAddr* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKWindow_init(&link->l_window, stop) == false) {
         return false;
     }
 
     link->vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)SDL_Vulkan_GetVkGetInstanceProcAddr();
 
     if (link->vkGetInstanceProcAddr == NULL) {
-        LINKWindow_destroy(&link->l_window);
+        if (STOP_HERE(stop) == false) {
+            LINKWindow_destroy(&link->l_window, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKGetInstanceProcAddr_destroy(LINKGetInstanceProcAddr* link) {
+void LINKGetInstanceProcAddr_destroy(LINKGetInstanceProcAddr* link, LINKType stop) {
     // No need to destroy proc addr it is managed by SDL
-    LINKWindow_destroy(&link->l_window);
+    if (STOP_HERE(stop) == false) {
+        LINKWindow_destroy(&link->l_window, stop);
+    }
 }
 
-bool LINKVulkanInstance_init(LINKVulkanInstance* link) {
-    if (LINKGetInstanceProcAddr_init(&link->l_get_proc_addr) == false) {
+bool LINKVulkanInstance_init(LINKVulkanInstance* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKGetInstanceProcAddr_init(&link->l_get_proc_addr, stop) == false) {
         return false;
     }
 
@@ -107,20 +136,24 @@ bool LINKVulkanInstance_init(LINKVulkanInstance* link) {
     };
 
     if (vulkan_init(&link->vk, &info) == false) {
-        LINKGetInstanceProcAddr_destroy(&link->l_get_proc_addr);
+        if (STOP_HERE(stop) == false) {
+            LINKGetInstanceProcAddr_destroy(&link->l_get_proc_addr, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanInstance_destroy(LINKVulkanInstance* link) {
+void LINKVulkanInstance_destroy(LINKVulkanInstance* link, LINKType stop) {
     vulkan_destroy(&link->vk);
-    LINKGetInstanceProcAddr_destroy(&link->l_get_proc_addr);
+    if (STOP_HERE(stop) == false) {
+        LINKGetInstanceProcAddr_destroy(&link->l_get_proc_addr, stop);
+    }
 }
 
-bool LINKVulkanSurface_init(LINKVulkanSurface *link) {
-    if (LINKVulkanInstance_init(&link->l_vk) == false) {
+bool LINKVulkanSurface_init(LINKVulkanSurface *link, LINKType stop) {
+    if (LINKVulkanInstance_init(&link->l_vk, stop) == false) {
         return false;
     }
 
@@ -131,23 +164,27 @@ bool LINKVulkanSurface_init(LINKVulkanSurface *link) {
         &link->surface);
 
     if (ret == false) {
-        LINKVulkanInstance_destroy(&link->l_vk);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanInstance_destroy(&link->l_vk, stop);
+        }
         return false;
     }
 
     return true;
 };
 
-void LINKVulkanSurface_destroy(LINKVulkanSurface* link) {
+void LINKVulkanSurface_destroy(LINKVulkanSurface* link, LINKType stop) {
     SDL_Vulkan_DestroySurface(
         link->l_vk.vk.instance,
         link->surface,
         link->l_vk.vk.allocator);
-    LINKVulkanInstance_destroy(&link->l_vk);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanInstance_destroy(&link->l_vk, stop);
+    }
 }
 
-bool LINKVulkanPhysicalDeviceList_init(LINKVulkanPhysicalDeviceList* link) {
-    if (LINKVulkanSurface_init(&link->l_surface) == false) {
+bool LINKVulkanPhysicalDeviceList_init(LINKVulkanPhysicalDeviceList* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanSurface_init(&link->l_surface, stop) == false) {
         return false;
     }
 
@@ -156,20 +193,22 @@ bool LINKVulkanPhysicalDeviceList_init(LINKVulkanPhysicalDeviceList* link) {
         link->l_surface.surface,
         &link->physical_devices);
     if (ret == false) {
-        LINKVulkanSurface_destroy(&link->l_surface);
+        LINKVulkanSurface_destroy(&link->l_surface, stop);
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanPhysicalDeviceList_destroy(LINKVulkanPhysicalDeviceList* link) {
+void LINKVulkanPhysicalDeviceList_destroy(LINKVulkanPhysicalDeviceList* link, LINKType stop) {
     vulkan_physical_device_list_destroy(&link->physical_devices);
-    LINKVulkanSurface_destroy(&link->l_surface);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanSurface_destroy(&link->l_surface, stop);
+    }
 }
 
-bool LINKVulkanDevice_init(LINKVulkanDevice* link) {
-    if (LINKVulkanPhysicalDeviceList_init(&link->l_physical_devices) == false) {
+bool LINKVulkanDevice_init(LINKVulkanDevice* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanPhysicalDeviceList_init(&link->l_physical_devices, stop) == false) {
         return false;
     }
 
@@ -179,58 +218,70 @@ bool LINKVulkanDevice_init(LINKVulkanDevice* link) {
         &link->vd);
     if (success == false)
     {
-        LINKVulkanPhysicalDeviceList_destroy(&link->l_physical_devices);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanPhysicalDeviceList_destroy(&link->l_physical_devices, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanDevice_destroy(LINKVulkanDevice* link) {
+void LINKVulkanDevice_destroy(LINKVulkanDevice* link, LINKType stop) {
     vulkan_device_destroy(&link->l_physical_devices.l_surface.l_vk.vk, &link->vd);
-    LINKVulkanPhysicalDeviceList_destroy(&link->l_physical_devices);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanPhysicalDeviceList_destroy(&link->l_physical_devices, stop);
+    }
 }
 
-bool LINKVulkanDeviceContext_init(LINKVulkanDeviceContext* link) {
-    if (LINKVulkanDevice_init(&link->l_vd) != true) {
+bool LINKVulkanDeviceContext_init(LINKVulkanDeviceContext* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanDevice_init(&link->l_vd, stop) != true) {
         return false;
     }
 
     const VulkanInstance* vk = &link->l_vd.l_physical_devices.l_surface.l_vk.vk;
     const VulkanDevice* vd = &link->l_vd.vd;
     if (vulkan_device_context_init(vk, vd, &link->device_context) != true) {
-        LINKVulkanDevice_destroy(&link->l_vd);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanDevice_destroy(&link->l_vd, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanDeviceContext_destroy(LINKVulkanDeviceContext* link) {
+void LINKVulkanDeviceContext_destroy(LINKVulkanDeviceContext* link, LINKType stop) {
     vulkan_device_context_destroy();
-    LINKVulkanDevice_destroy(&link->l_vd);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanDevice_destroy(&link->l_vd, stop);
+    }
 }
 
-bool LINKVulkanShaders_init(LINKVulkanShaders* link) {
-    if (LINKVulkanDeviceContext_init(&link->l_device_context) == false) {
+bool LINKVulkanShaders_init(LINKVulkanShaders* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanDeviceContext_init(&link->l_device_context, stop) == false) {
         return false;
     }
 
     if (vulkan_shaders_init(&link->l_device_context.device_context, &link->shaders) == false) {
-        LINKVulkanDeviceContext_destroy(&link->l_device_context);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanDeviceContext_destroy(&link->l_device_context, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanShaders_destroy(LINKVulkanShaders* link) {
+void LINKVulkanShaders_destroy(LINKVulkanShaders* link, LINKType stop) {
     vulkan_shaders_destroy(&link->l_device_context.device_context, &link->shaders);
-    LINKVulkanDeviceContext_destroy(&link->l_device_context);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanDeviceContext_destroy(&link->l_device_context, stop);
+    }
 }
 
-bool LINKVulkanSwapchain_init(LINKVulkanSwapchain* link) {
-    if (LINKVulkanShaders_init(&link->l_shaders) == false) {
+bool LINKVulkanSwapchain_init(LINKVulkanSwapchain* link, LINKType stop) {
+    if ((stop != LINK_SWAPCHAIN) && LINKVulkanShaders_init(&link->l_shaders, stop) == false) {
         return false;
     }
 
@@ -246,14 +297,16 @@ bool LINKVulkanSwapchain_init(LINKVulkanSwapchain* link) {
         &link->vk_swapchain);
 
     if (result == false) {
-        LINKVulkanShaders_destroy(&link->l_shaders);
+        if ((stop != LINK_SWAPCHAIN) == false) {
+            LINKVulkanShaders_destroy(&link->l_shaders, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanSwapchain_destroy(LINKVulkanSwapchain* link) {
+void LINKVulkanSwapchain_destroy(LINKVulkanSwapchain* link, LINKType stop) {
     const VulkanDevice* device = &link->l_shaders.l_device_context.l_vd.vd;
     const VulkanInstance* vk = &link->l_shaders.l_device_context.l_vd.l_physical_devices.l_surface.l_vk.vk;
     const VulkanDeviceContext* context = &link->l_shaders.l_device_context.device_context;
@@ -263,12 +316,14 @@ void LINKVulkanSwapchain_destroy(LINKVulkanSwapchain* link) {
         context,
         &link->vk_swapchain);
 
-    LINKVulkanShaders_destroy(&link->l_shaders);
+    if (stop != LINK_SWAPCHAIN) {
+        LINKVulkanShaders_destroy(&link->l_shaders, stop);
+    }
 }
 
-bool LINKVulkanSwapchainImages_init(LINKVulkanSwapchainImages* link) {
+bool LINKVulkanSwapchainImages_init(LINKVulkanSwapchainImages* link, LINKType stop) {
 
-    if (LINKVulkanSwapchain_init(&link->l_swapchain) == false) {
+    if (STOP_HERE(stop) == false && LINKVulkanSwapchain_init(&link->l_swapchain, stop) == false) {
         return false;
     }
 
@@ -277,20 +332,25 @@ bool LINKVulkanSwapchainImages_init(LINKVulkanSwapchainImages* link) {
         &link->swapchain_images);
 
     if (result == false) {
-        LINKVulkanSwapchain_destroy(&link->l_swapchain);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanSwapchain_destroy(&link->l_swapchain, stop);
+        }
         return false;
     }
 
     return true;
 }
 
-void LINKVulkanSwapchainImages_destroy(LINKVulkanSwapchainImages* link) {
+void LINKVulkanSwapchainImages_destroy(LINKVulkanSwapchainImages* link, LINKType stop) {
     vulkan_swapchain_images_destroy(&link->swapchain_images);
-    LINKVulkanSwapchain_destroy(&link->l_swapchain);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanSwapchain_destroy(&link->l_swapchain, stop);
+    }
 }
 
-bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link) {
-    if (LINKVulkanSwapchainImages_init(&link->l_swapchain_images) == false) {
+bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link, LINKType stop) {
+
+    if (STOP_HERE(stop) == false && LINKVulkanSwapchainImages_init(&link->l_swapchain_images, stop) == false) {
         return false;
     }
 
@@ -306,19 +366,24 @@ bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link) {
         &link->render_pass);
 
     if (result == false) {
-        LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images, stop);
+        }
     }
 
     return result;
 }
 
-void LINKVulkanRenderPass_destroy(LINKVulkanRenderPass* link) {
+void LINKVulkanRenderPass_destroy(LINKVulkanRenderPass* link, LINKType stop) {
     vulkan_render_pass_destroy(&link->render_pass);
-    LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images, stop);
+    }
 }
 
-bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link) {
-    if (LINKVulkanRenderPass_init(&link->l_render_pass) == false) {
+bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link, LINKType stop) {
+
+    if (STOP_HERE(stop) == false && LINKVulkanRenderPass_init(&link->l_render_pass, stop) == false) {
         return false;
     }
 
@@ -335,20 +400,24 @@ bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link) {
         &link->pipeline);
 
     if (result == false) {
-        LINKVulkanRenderPass_destroy(&link->l_render_pass);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanRenderPass_destroy(&link->l_render_pass, stop);
+        }
     }
 
     return result;
 }
 
-void LINKVulkanGraphicsPipeline_destroy(LINKVulkanGraphicsPipeline* link) {
+void LINKVulkanGraphicsPipeline_destroy(LINKVulkanGraphicsPipeline* link, LINKType stop) {
     vulkan_graphics_pipeline_destroy(&link->pipeline);
-    LINKVulkanRenderPass_destroy(&link->l_render_pass);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanRenderPass_destroy(&link->l_render_pass, stop);
+    }
 }
 
 
-bool LINKVulkanFramebuffers_init(LINKVulkanFramebuffers* link) {
-    if (LINKVulkanGraphicsPipeline_init(&link->l_graphics_pipeline) == false) {
+bool LINKVulkanFramebuffers_init(LINKVulkanFramebuffers* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanGraphicsPipeline_init(&link->l_graphics_pipeline, stop) == false) {
         return false;
     }
 
@@ -358,19 +427,23 @@ bool LINKVulkanFramebuffers_init(LINKVulkanFramebuffers* link) {
         &link->vk_framebuffers);
 
     if (result == false) {
-        LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
+        }
     }
 
     return result;
 }
 
-void LINKVulkanFramebuffers_destroy(LINKVulkanFramebuffers* link) {
+void LINKVulkanFramebuffers_destroy(LINKVulkanFramebuffers* link, LINKType stop) {
     vulkan_framebuffers_destroy(&link->vk_framebuffers);
-    LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
+    }
 }
 
-bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link) {
-    if (LINKVulkanFramebuffers_init(&link->l_framebuffers) == false) {
+bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanFramebuffers_init(&link->l_framebuffers, stop) == false) {
         return false;
     }
 
@@ -379,20 +452,24 @@ bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link) {
         &link->sync_objects);
 
     if (result == false) {
-        LINKVulkanFramebuffers_destroy(&link->l_framebuffers);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanFramebuffers_destroy(&link->l_framebuffers, stop);
+        }
     }
     return result;
 }
 
-void LINKVulkanSyncObjects_destroy(LINKVulkanSyncObjects* link) {
+void LINKVulkanSyncObjects_destroy(LINKVulkanSyncObjects* link, LINKType stop) {
     vulkan_sync_objects_destroy(
         link->l_framebuffers.vk_framebuffers.d_context,
         &link->sync_objects);
-    LINKVulkanFramebuffers_destroy(&link->l_framebuffers);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanFramebuffers_destroy(&link->l_framebuffers, stop);
+    }
 }
 
-bool LINKVulkanCommands_init(LINKVulkanCommands* link) {
-    if (LINKVulkanSyncObjects_init(&link->l_sync_objects) == false) {
+bool LINKVulkanCommands_init(LINKVulkanCommands* link, LINKType stop) {
+    if (STOP_HERE(stop) == false && LINKVulkanSyncObjects_init(&link->l_sync_objects, stop) == false) {
         return false;
     }
 
@@ -401,30 +478,39 @@ bool LINKVulkanCommands_init(LINKVulkanCommands* link) {
         &link->commands);
 
     if (result == false) {
-        LINKVulkanSyncObjects_destroy(&link->l_sync_objects);
+        if (STOP_HERE(stop) == false) {
+            LINKVulkanSyncObjects_destroy(&link->l_sync_objects, stop);
+        }
     }
 
     return result;
 }
 
-void LINKVulkanCommands_destroy(LINKVulkanCommands* link) {
+void LINKVulkanCommands_destroy(LINKVulkanCommands* link, LINKType stop) {
     vulkan_commands_destroy(
         link->l_sync_objects.l_framebuffers.vk_framebuffers.d_context,
         &link->commands);
-        LINKVulkanSyncObjects_destroy(&link->l_sync_objects);
+    if (STOP_HERE(stop) == false) {
+        LINKVulkanSyncObjects_destroy(&link->l_sync_objects, stop);
+    }
 }
 
 bool context_init(Context* context) {
-    return LINKVulkanCommands_init(context);
+    return LINKVulkanCommands_init(context, LINK_NONE);
 }
 
 void context_destroy(Context* context) {
-    LINKVulkanCommands_destroy(context);
+    LINKVulkanCommands_destroy(context, LINK_NONE);
 }
 
 void context_sleep(Context* context, uint32_t ms) {
     (void)context;
     SDL_Delay(ms);
+}
+
+bool context_swapchain_recreate(Context* context) {
+    LINKVulkanCommands_destroy(context, LINK_SWAPCHAIN);
+    return LINKVulkanCommands_init(context, LINK_SWAPCHAIN);
 }
 
 bool context_draw(Context* context) {
@@ -435,13 +521,13 @@ bool context_draw(Context* context) {
         .l_framebuffers
         .l_graphics_pipeline
         .pipeline;
-    const VulkanSwapchain* swapchain = &context->l_sync_objects
+    const LINKVulkanSwapchain* l_swapchain = &context->l_sync_objects
         .l_framebuffers
         .l_graphics_pipeline
         .l_render_pass
         .l_swapchain_images
-        .l_swapchain
-        .vk_swapchain;
+        .l_swapchain;
+    const VulkanSwapchain* swapchain = &l_swapchain->vk_swapchain;
     const VulkanCommands* commands = &context->commands;
     const VulkanSyncObjects* sync_objects = &context->l_sync_objects
         .sync_objects;
@@ -449,10 +535,17 @@ bool context_draw(Context* context) {
         .l_framebuffers
         .vk_framebuffers;
 
+    // TODO clean all this shit up, recreate swapchain when I should, and handle using
+    // a sub optimal swapchain.
     uint32_t i = 0;
-    clock_t start = clock();
-    #define NUM_FRAMES_TIMED 200
+    clock_t start = clock(); // TODO use RTC, as I'm trying to measure GPU perf
+    #define NUM_FRAMES_TIMED 20
     while (i < NUM_FRAMES_TIMED) {
+        // polling events... not sure if needed to change window size.
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+        }
+        context_swapchain_recreate(context);
         const bool result = vulkan_draw_mutate(
             device_context,
             swapchain,
@@ -461,6 +554,7 @@ bool context_draw(Context* context) {
             sync_objects,
             framebuffers);
         if (result == false) {
+            printf("FAILED!!!!!!!!\n");
             device_context->vkDeviceWaitIdle(device_context->d_device->logical_device);
             return false;
         }
@@ -477,4 +571,3 @@ bool context_draw(Context* context) {
 
     return true;
 }
-

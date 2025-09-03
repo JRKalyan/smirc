@@ -70,7 +70,6 @@ typedef struct {
     uint32_t surface_format_count;
     VkPresentModeKHR* present_modes; // managed resource (breaking rule)
     uint32_t present_mode_count;
-    VkSurfaceCapabilitiesKHR surface_capabilities;
 } VulkanDeviceSurfaceCompat;
 
 typedef struct {
@@ -238,13 +237,16 @@ typedef struct VulkanFramebuffers {
     VkFramebuffer framebuffers[MAX_IMAGE];
 } VulkanFramebuffers;
 
+// TODO support multiple active batches
+#define NUM_ACTIVE_BATCHES 2 
+
 typedef struct VulkanSyncObjects {
     // Lifetime Dependencies
     // VulkanDeviceContext
 
-    VkSemaphore image_acquired;
-    VkSemaphore draw_finished;
-    VkFence command_buffer_available;
+    VkSemaphore image_acquired[NUM_ACTIVE_BATCHES];
+    VkSemaphore draw_finished[NUM_ACTIVE_BATCHES];
+    VkFence command_buffer_available[NUM_ACTIVE_BATCHES];
 } VulkanSyncObjects;
 
 typedef struct VulkanCommands {
@@ -252,7 +254,7 @@ typedef struct VulkanCommands {
     // VulkanDeviceContext
 
     VkCommandPool command_pool;
-    VkCommandBuffer command_buffer;
+    VkCommandBuffer command_buffers[NUM_ACTIVE_BATCHES];
 } VulkanCommands;
 
 // TODO mutation scopes:

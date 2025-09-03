@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 // TODO make alternative
+// TODO this shouldn't be built in C
 
 // read in config file that tells us the compiler & args, others
 
