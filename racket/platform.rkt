@@ -8,14 +8,18 @@
 ;; TODO try scribble for literate programming
 
 ;; WORLD PROGRAMS:
-;; World programs are implemented as thunks which return
-;; 0 or more synchronization events, representing continuing world effects
-;; that must be performed by 'the platform'.
+;; World programs are programs which interact with the world to perform
+;; effects and retrieve information.
+
+;; World programs are implemented as thunks which return a synchronization
+;; event, which is a promise to return a value or interact with the world
+;; at a later time, or they may return immediately with a value.
 
 ;; World programs are constructed through the composition of 'atomic' world
 ;; programs provided by the platform. These are known as atoms.
 
-;; World programs can be composed via 'bind' or 'multi'.
+;; World programs can be composed via 'bind' or 'multi' into larger
+;; world programs.
 
 
 ;; ATOM IMPLEMENTATIONS
@@ -47,85 +51,57 @@
     (define wp-result (wp))
     (cond
       [(evt? wp-result) (handle-evt wp-result (lambda (sr) (next sr)))]
-      [else ((next wp-result))])))
+      [else ((next wp-result))]))) ;; TODO: could add a guard to prevent infinite recursion here, forcing scheduling via always event
 
-;; TODO, just realized that choice would simplify this quite a bit and remove the
-;; need for an atom list. Whether or not the solution performs well enough compared
-;; to the original C design is to be seen, but it is more elegant. Try this
-;; first.
-(define (multi wps) 0)
+;; TODO: create a lambda that runs each of the wps, and for each of the sync events
+;; that they return (handle the non sync event case as well), we create a choice
+;; that will sync on any of them. When any of them wake, they need to be wrapped in a handle-event
+;; that will return a multi for all of the rest. They could capture
+
+;; THe actual strategy will be a handle event wrapping a choice evenet wrapping handle events for all of the sync events generated
+;; by each of the WPs. The outer handle event reconstructs itself but replaces the event with it's syncrhonization result (if it is
+;; a new event) in the list, keeping the others.
+
+;; This isn't any better or more elegant than having the main loop handle lists of synchronization objects, because that is
+;; exactly what we're doing here but confining it to multi. It does maintain program structure in some way and I wonder if
+;; that will be helpful for debugging. I wonder if the overhead of extra wrapping events will be a problem, or non
+;; locality of a vector of events will be a problem. But I can always change the scheduler later to optimize if needed.
+(define (multi wps)
+  ;; Run the world programs for a list of just the synchronization events
+  (define events (filter evt? (map (lambda (fn) (fn)) wps)))
+  (multi-event events))
+
+(define (multi-event events)
+  ;; Map the events into events that return their sync result plus the event it came from
+  (define events_with_id ;; TODO change name!
+    (map (lambda (evt)
+           (handle-evt evt (lambda (res)
+                             (cons res evt)))) events))
+
+  ;; Choice will sync on any of the events in events-with-id
+  (define choice (apply choice-evt events_with_id))
+
+  ;; Make a sync event that will create a new multi based on the returned value from
+  ;; choice. It may be continuing computation as requested by a sync object or terminated
+  ;; as indicated by a non evt? value, in which case we only need to track the remaining
+  ;; events that were not synced yet. In the former, we need to wait for those events plus
+  ;; the new one returned.
+  (handle-evt choice (lambda (event_with_id)
+                       (define events_less_this_one (remove (cdr event_with_id) events)) ; TODO change name!
+                       (define sync-result (car event_with_id))
+                       (cond
+                         [(evt? sync-result) (multi-event (cons sync-result events_less_this_one))]
+                         [else (multi-event events_less_this_one)]))))
  
-;; TODO in this model these are not really atoms, but world program
-;; continuations. The name should be changed. But I'm probably scrapping the
-;; atom list entirely in favour of the single synchronization event model, at
-;; least for now. If it needs to come back it will be for performance.
-(struct atom (id event))
-(struct atom-list (atoms free-ids))
-
-;; Returns the next ID and next free ID list
-(define (next-id/free-ids al)
-  (define free-ids (atom-list-free-ids al))
-  (define max-id (length (atom-list-atoms al)))
-  (cond
-    [(null? free-ids) (values max-id '())]
-    [else (values (car free-ids) (cdr free-ids))]))
-
-;; Returns an atom list with the given id removed
-(define (remove-atom id al)
-  (atom-list
-   (filter (lambda (atom)
-             (not (equal? (atom-id atom) id)))
-           (atom-list-atoms al))
-   (cons id (atom-list-free-ids al))))
-
-(define empty-atom-list (atom-list '() '()))
-
-(define (schedule-evt-as-atom evt al)
-  (define-values (next-id next-free-ids)
-    (next-id/free-ids al))
-  (atom-list
-   (cons (atom
-          next-id
-          (handle-evt
-           evt
-           (lambda (r)
-             (atom-sync-result next-id r))))
-         (atom-list-atoms al))
-   next-free-ids))
-
-;; Construct a list of all the sync objects
-(define (atom-list-update al sr)
-  ; Remove updated atom from the sync list
-  (define event-id (atom-sync-result-id sr))
-  (define event-original-result (atom-sync-result-original sr))
-  (define remaining-atoms (remove-atom event-id al)) 
-  (cond
-    [(evt? event-original-result)
-     ;; Schedule event if the synchronization result provides another
-     ;; atom.
-     (schedule-evt-as-atom event-original-result remaining-atoms)]
-    ;; NOTE: 'multi' could be implemented by allowing WP thunks to return
-    ;; multiple synchronization events, and we schedule each of them here.
-    ;; I am migrating to use choice events instead for now.
-    [else
-     ;; Event has completed, nothing new to schedule.
-     remaining-atoms]))
-
-;; All atom sync objects are wrapped to return this struct, where the original
-;; sync result is in 'original', but the id in the atom list is returned in 'id'
-(struct atom-sync-result (id original))
-
 ;; Example wp to wait 2 seconds
 (define wait-wp (wait-msec 2000))
 
 (define (main wp)
-  (define (main-loop al)
-    (define evt-list
-      (map (lambda (a) (atom-event a)) (atom-list-atoms al)))
+  (define (main-loop cur)
     (cond
-      [(null? evt-list) (display "DONE\n")]
-      [else (main-loop (atom-list-update al (apply sync evt-list)))]))
-  (main-loop (schedule-evt-as-atom (wp) empty-atom-list)))
+      [(evt? cur) (main-loop (sync cur))]
+      [else (display "WORLD PROGRAM TERMINATED:") (display cur) (newline)]))
+  (main-loop (wp)))
 
 ;; TODO: starvation if you have a WP that returns an object directly,
 ;; bound to itself. If we're allowing direct function calls for some atom
@@ -194,7 +170,7 @@
 ; (main (bind looping-wp (lambda (_something) wait-wp)))
 
 ;; Example bind tests that works
-;(main (bind wait-wp (lambda (test) (display "hello")(display test))))
+(main (bind wait-wp (lambda (test) (display "hello"))))
 
 ;; Doesn't work:
 ;; as expected for now, since it never returns a sync object and
@@ -203,6 +179,16 @@
 ; (main (bind current-ms-atom (lambda (ms) current-ms-atom)))
 
 ; Works:
-(main (bind current-ms-atom (lambda (ms) wait-wp)))
+;(main (bind current-ms-atom (lambda (ms) wait-wp)))
 
-;; TODO for next commit: make an only sync event main loop, remove atom list
+;; TODO for next: try a call depth limitation for world programs that never
+;; go to scheduling, forcing them to schedule instead of calling next.
+;; Is there some kind of monad I can create for this purpose? The monadic context
+;; around the computation would be the number of calls (since last scheduling
+;; opportunity). We would want to make functions that just return plain
+;; values, but lift them (say during a bind OR when first entering main loop)
+;; into a monadic context after scheduling has begun. That monadic context
+;; would track call depth, and return a sync event that could be always on or
+;; could be delayed by an alarm evt. Probably always on is better, let hte random
+;; number generator deal with scheduling problems and not artificially delay
+;; some programs.
