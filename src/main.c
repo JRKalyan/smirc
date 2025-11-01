@@ -431,24 +431,7 @@ void* inner_main(void* data) {
 
     main_loop(resume, world_program);
 
-    /*
-    if (scm_is_true(ret)) {
-        Context context;
-        if (!context_init(&context)) {
-            puts(stfa_to_ascii[STFA_OUDENTHORPE]);
-            exit(EXIT_FAILURE);
-        }
-        else {
-            puts(stfa_to_ascii[STFA_MONOTHORPE]);
-            const bool result = context_draw(&context);
-            if (result) {
-                context_sleep(&context, 600);
-            }
-            context_destroy(&context);
-        }
 
-    }
-    */
 
     destroy_thread_pool(&s_thread_pool);
 
@@ -478,6 +461,25 @@ void* inner_main(void* data) {
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
+
+    // GRAPHICS
+    // Eventually this should be configured by the guest language
+    if (true) {
+        Context context;
+        if (!context_init(&context)) {
+            puts(stfa_to_ascii[STFA_OUDENTHORPE]);
+            exit(EXIT_FAILURE);
+        }
+        else {
+            puts(stfa_to_ascii[STFA_MONOTHORPE]);
+            const bool result = context_draw(&context);
+            if (result) {
+                context_sleep(&context, 600);
+            }
+            context_destroy(&context);
+        }
+
+    }
 
 
     // TODO pthread_sigmask might be what I want for multithreaded

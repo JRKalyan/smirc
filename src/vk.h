@@ -48,7 +48,7 @@ typedef struct VulkanInstance {
     PFN_vkDestroyInstance vkDestroyInstance;
     PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices;
     PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties;
-    PFN_vkGetPhysicalDeviceFeatures vkGetPhysicalDeviceFeatures;
+    PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
     PFN_vkCreateDevice vkCreateDevice;
     PFN_vkDestroyDevice vkDestroyDevice;
     PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties;
@@ -88,7 +88,8 @@ typedef struct {
     VkExtensionProperties* extension_properties; // managed resource
 
     VkPhysicalDeviceProperties device_properties;
-    VkPhysicalDeviceFeatures device_features;
+    VkPhysicalDeviceVulkan13Features device_vk13_features;
+    VkPhysicalDeviceFeatures2 device_features;
 
     // Optional temp index location for first present-capable queue family
     // depends on surface_compay
@@ -145,8 +146,6 @@ typedef struct VulkanDeviceContext {
     PFN_vkDestroyImageView vkDestroyImageView;
     PFN_vkCreateShaderModule vkCreateShaderModule;
     PFN_vkDestroyShaderModule vkDestroyShaderModule;
-    PFN_vkCreateRenderPass vkCreateRenderPass;
-    PFN_vkDestroyRenderPass vkDestroyRenderPass;
     PFN_vkCreatePipelineLayout vkCreatePipelineLayout;
     PFN_vkDestroyPipelineLayout vkDestroyPipelineLayout;
     PFN_vkCreateGraphicsPipelines vkCreateGraphicsPipelines;
@@ -159,8 +158,8 @@ typedef struct VulkanDeviceContext {
     PFN_vkResetCommandBuffer vkResetCommandBuffer;
     PFN_vkBeginCommandBuffer vkBeginCommandBuffer;
     PFN_vkEndCommandBuffer vkEndCommandBuffer;
-    PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass;
-    PFN_vkCmdEndRenderPass vkCmdEndRenderPass;
+    PFN_vkCmdBeginRendering vkCmdBeginRendering;
+    PFN_vkCmdEndRendering vkCmdEndRendering;
     PFN_vkCmdBindPipeline vkCmdBindPipeline;
     PFN_vkCmdSetViewport vkCmdSetViewport;
     PFN_vkCmdSetScissor vkCmdSetScissor;
@@ -175,6 +174,7 @@ typedef struct VulkanDeviceContext {
     PFN_vkDestroyFence vkDestroyFence;
     PFN_vkResetFences vkResetFences;
     PFN_vkDeviceWaitIdle vkDeviceWaitIdle;
+    PFN_vkCmdPipelineBarrier2 vkCmdPipelineBarrier2;
 } VulkanDeviceContext;
 
 typedef struct VulkanShaders {
@@ -207,16 +207,9 @@ typedef struct VulkanSwapchainImages {
 
 } VulkanSwapchainImages;
 
-typedef struct VulkanRenderPass {
-    // Lifetime Dependencies
-    const VulkanDeviceContext* d_context;
-    const VulkanSwapchainImages* d_swapchain_images;
-
-    VkRenderPass render_pass;
-} VulkanRenderPass;
-
 typedef struct VulkanGraphicsPipeline {
     // Lifetime Dependencies:
+    // - Swapchain (because pipeline has image format specified)
     // - VulkanShaders
     //   TODO shader modules are actually init dependencies
     //   not lifetime dependencies. Can rework this to save
@@ -226,16 +219,6 @@ typedef struct VulkanGraphicsPipeline {
     VkPipeline graphics_pipeline;
     VkPipelineLayout pipeline_layout;
 } VulkanGraphicsPipeline;
-
-typedef struct VulkanFramebuffers {
-    // Lifetime dependencies
-    const VulkanDeviceContext* d_context;
-    const VulkanSwapchainImages* d_swapchain_images;
-    const VulkanRenderPass* d_render_pass;
-
-    uint32_t framebuffer_count;
-    VkFramebuffer framebuffers[MAX_IMAGE];
-} VulkanFramebuffers;
 
 // TODO support multiple active batches
 #define NUM_ACTIVE_BATCHES 2 
@@ -329,22 +312,10 @@ void vulkan_swapchain_images_destroy(VulkanSwapchainImages* images);
 bool vulkan_graphics_pipeline_init(
     const VulkanDeviceContext* context,
     const VulkanShaders* shaders,
-    const VulkanRenderPass* render_pass,
+    const VulkanSwapchain* swapchain,
     VulkanGraphicsPipeline* graphics_pipeline);
 void vulkan_graphics_pipeline_destroy(
     VulkanGraphicsPipeline *graphics_pipeline);
-
-bool vulkan_render_pass_init(
-    const VulkanDeviceContext *context,
-    const VulkanSwapchainImages *swapchain_images,
-    VulkanRenderPass* vk_render_pass);
-void vulkan_render_pass_destroy(
-    VulkanRenderPass* vk_render_pass);
-
-bool vulkan_framebuffers_init(
-    const VulkanRenderPass* vk_render_pass,
-    VulkanFramebuffers* vk_framebuffers);
-void vulkan_framebuffers_destroy(VulkanFramebuffers* vk_framebuffers);
 
 bool vulkan_commands_init(
     const VulkanDeviceContext* context,
@@ -371,5 +342,5 @@ bool vulkan_draw_mutate(
     const VulkanGraphicsPipeline* vk_graphics_pipeline,
     const VulkanCommands* commands,
     const VulkanSyncObjects* sync,
-    const VulkanFramebuffers* framebuffers);
+    const VulkanSwapchainImages* images);
 #endif

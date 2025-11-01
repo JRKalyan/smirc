@@ -1,6 +1,7 @@
 #lang racket/base
 
-(define scheduled-atoms '())
+(require racket/future
+         racket/place)
 
 ;; TODO if we need timeouts on certain sync results, then group an alarm-evt
 ;; with choice event
@@ -34,24 +35,26 @@
 
 ;; WP COMBINATORS
 
+
+;; TODO consider a platform which learns when to schedule work on another
+;; thread and when to simply call the pure work.
+(define (schedule-pure-work work)
+  (define worker-ch (make-channel))
+  (define worker-thread (thread (lambda () (channel-put worker-ch (work)))))
+  worker-ch)
+
 ;; Create a new world program from wp, that feeds the result of wp into
 ;; a pure function, next, which should also return a world program.
 (define (bind wp next)
   (lambda ()
-    ;; If wp returns a sync object (promise) then, return a promise that returns
-    ;; the result of calling next on the promise's result
-
-    ;; If wp is a known value, then return the result of next when passed the
-    ;; known value
-
-    ;; This allows atoms to be implemented as plain functions that have
-    ;; immediate effects, for times where no real wait is expected. This way we
-    ;; circumvent waiting for the main loop to synchronize on a quick atom, and
-    ;; just jump into that atom's implementation immediately.
     (define wp-result (wp))
     (cond
-      [(evt? wp-result) (handle-evt wp-result (lambda (sr) ((next sr))))] ;; TODO guard here
-      [else ((next wp-result))]))) ;; TODO guard here
+      [(evt? wp-result)
+       ;; When the sync event is ready, schedule the next function to run with its result
+       (handle-evt wp-result (lambda (sr) (schedule-pure-work (lambda () (next sr)))))]
+      [else
+       ;; The next value is ready now, so schedule the next function to run with the result
+       (schedule-pure-work (lambda () (next wp-result)))])))
 
 (define (multi wps)
   (lambda ()
@@ -114,9 +117,8 @@
 ;; NOTE since display-atom takes 1 arg, we can do this:
 (define simple-bind2 (bind wait-wp display-atom))
 
-
 ;(main (bind wait-wp (lambda (test) (display "hello"))))
 ;(main (bind wait-wp do-two-wp))
 ;(main do-two-wp)
 ;(main do-three-wp)
-(main simple-bind2)
+;(main simple-bind2)

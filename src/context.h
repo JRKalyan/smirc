@@ -89,24 +89,14 @@ typedef struct {
 
 typedef struct {
     LINKVulkanSwapchainImages l_swapchain_images;
-    VulkanRenderPass render_pass;
-} LINKVulkanRenderPass;
-
-typedef struct {
-    LINKVulkanRenderPass l_render_pass;
     VulkanGraphicsPipeline pipeline;
 } LINKVulkanGraphicsPipeline;
-
-typedef struct {
-    LINKVulkanGraphicsPipeline l_graphics_pipeline;
-    VulkanFramebuffers vk_framebuffers;
-} LINKVulkanFramebuffers;
 
 // TODO this could be made earlier, avoid remaking for swapchain
 // This is another reason to move to DAG instead of chain
 // for init, on top of flexibility for choosing what to init
 typedef struct {
-    LINKVulkanFramebuffers l_framebuffers;
+    LINKVulkanGraphicsPipeline l_graphics_pipeline;
     VulkanSyncObjects sync_objects;
 } LINKVulkanSyncObjects; 
 

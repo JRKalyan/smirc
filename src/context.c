@@ -348,22 +348,23 @@ void LINKVulkanSwapchainImages_destroy(LINKVulkanSwapchainImages* link, LINKType
     }
 }
 
-bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link, LINKType stop) {
+bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link, LINKType stop) {
 
+    
     if (STOP_HERE(stop) == false && LINKVulkanSwapchainImages_init(&link->l_swapchain_images, stop) == false) {
         return false;
     }
 
-    const VulkanDeviceContext* context = &link->l_swapchain_images
+    const LINKVulkanShaders* l_shaders = &link->l_swapchain_images
         .l_swapchain
-        .l_shaders
-        .l_device_context
+        .l_shaders;
+    const VulkanDeviceContext* context = &l_shaders->l_device_context
         .device_context;
-
-    const bool result = vulkan_render_pass_init(
+    const bool result = vulkan_graphics_pipeline_init(
         context,
-        &link->l_swapchain_images.swapchain_images,
-        &link->render_pass);
+        &l_shaders->shaders,
+        link->l_swapchain_images.swapchain_images.d_swapchain,
+        &link->pipeline);
 
     if (result == false) {
         if (STOP_HERE(stop) == false) {
@@ -374,86 +375,25 @@ bool LINKVulkanRenderPass_init(LINKVulkanRenderPass* link, LINKType stop) {
     return result;
 }
 
-void LINKVulkanRenderPass_destroy(LINKVulkanRenderPass* link, LINKType stop) {
-    vulkan_render_pass_destroy(&link->render_pass);
+void LINKVulkanGraphicsPipeline_destroy(LINKVulkanGraphicsPipeline* link, LINKType stop) {
+    vulkan_graphics_pipeline_destroy(&link->pipeline);
     if (STOP_HERE(stop) == false) {
         LINKVulkanSwapchainImages_destroy(&link->l_swapchain_images, stop);
     }
 }
 
-bool LINKVulkanGraphicsPipeline_init(LINKVulkanGraphicsPipeline* link, LINKType stop) {
-
-    if (STOP_HERE(stop) == false && LINKVulkanRenderPass_init(&link->l_render_pass, stop) == false) {
-        return false;
-    }
-
-    const LINKVulkanShaders* l_shaders = &link->l_render_pass
-        .l_swapchain_images
-        .l_swapchain
-        .l_shaders;
-    const VulkanDeviceContext* context = &l_shaders->l_device_context
-        .device_context;
-    const bool result = vulkan_graphics_pipeline_init(
-        context,
-        &l_shaders->shaders,
-        &link->l_render_pass.render_pass,
-        &link->pipeline);
-
-    if (result == false) {
-        if (STOP_HERE(stop) == false) {
-            LINKVulkanRenderPass_destroy(&link->l_render_pass, stop);
-        }
-    }
-
-    return result;
-}
-
-void LINKVulkanGraphicsPipeline_destroy(LINKVulkanGraphicsPipeline* link, LINKType stop) {
-    vulkan_graphics_pipeline_destroy(&link->pipeline);
-    if (STOP_HERE(stop) == false) {
-        LINKVulkanRenderPass_destroy(&link->l_render_pass, stop);
-    }
-}
-
-
-bool LINKVulkanFramebuffers_init(LINKVulkanFramebuffers* link, LINKType stop) {
+bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link, LINKType stop) {
     if (STOP_HERE(stop) == false && LINKVulkanGraphicsPipeline_init(&link->l_graphics_pipeline, stop) == false) {
         return false;
     }
 
-    const VulkanRenderPass* vk_render_pass = &link->l_graphics_pipeline.l_render_pass.render_pass;
-    const bool result = vulkan_framebuffers_init(
-        vk_render_pass,
-        &link->vk_framebuffers);
-
-    if (result == false) {
-        if (STOP_HERE(stop) == false) {
-            LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
-        }
-    }
-
-    return result;
-}
-
-void LINKVulkanFramebuffers_destroy(LINKVulkanFramebuffers* link, LINKType stop) {
-    vulkan_framebuffers_destroy(&link->vk_framebuffers);
-    if (STOP_HERE(stop) == false) {
-        LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
-    }
-}
-
-bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link, LINKType stop) {
-    if (STOP_HERE(stop) == false && LINKVulkanFramebuffers_init(&link->l_framebuffers, stop) == false) {
-        return false;
-    }
-
     const bool result = vulkan_sync_objects_init(
-        link->l_framebuffers.vk_framebuffers.d_context,
+        link->l_graphics_pipeline.pipeline.d_context,
         &link->sync_objects);
 
     if (result == false) {
         if (STOP_HERE(stop) == false) {
-            LINKVulkanFramebuffers_destroy(&link->l_framebuffers, stop);
+            LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
         }
     }
     return result;
@@ -461,10 +401,10 @@ bool LINKVulkanSyncObjects_init(LINKVulkanSyncObjects* link, LINKType stop) {
 
 void LINKVulkanSyncObjects_destroy(LINKVulkanSyncObjects* link, LINKType stop) {
     vulkan_sync_objects_destroy(
-        link->l_framebuffers.vk_framebuffers.d_context,
+        link->l_graphics_pipeline.pipeline.d_context,
         &link->sync_objects);
     if (STOP_HERE(stop) == false) {
-        LINKVulkanFramebuffers_destroy(&link->l_framebuffers, stop);
+        LINKVulkanGraphicsPipeline_destroy(&link->l_graphics_pipeline, stop);
     }
 }
 
@@ -474,7 +414,7 @@ bool LINKVulkanCommands_init(LINKVulkanCommands* link, LINKType stop) {
     }
 
     const bool result = vulkan_commands_init(
-        link->l_sync_objects.l_framebuffers.vk_framebuffers.d_context,
+        link->l_sync_objects.l_graphics_pipeline.pipeline.d_context,
         &link->commands);
 
     if (result == false) {
@@ -488,7 +428,7 @@ bool LINKVulkanCommands_init(LINKVulkanCommands* link, LINKType stop) {
 
 void LINKVulkanCommands_destroy(LINKVulkanCommands* link, LINKType stop) {
     vulkan_commands_destroy(
-        link->l_sync_objects.l_framebuffers.vk_framebuffers.d_context,
+        link->l_sync_objects.l_graphics_pipeline.pipeline.d_context,
         &link->commands);
     if (STOP_HERE(stop) == false) {
         LINKVulkanSyncObjects_destroy(&link->l_sync_objects, stop);
@@ -515,25 +455,19 @@ bool context_swapchain_recreate(Context* context) {
 
 bool context_draw(Context* context) {
     const VulkanDeviceContext* device_context = context->l_sync_objects
-        .l_framebuffers
-        .vk_framebuffers.d_context;
+        .l_graphics_pipeline
+        .pipeline.d_context;
     const VulkanGraphicsPipeline* graphics_pipeline = &context->l_sync_objects
-        .l_framebuffers
         .l_graphics_pipeline
         .pipeline;
-    const LINKVulkanSwapchain* l_swapchain = &context->l_sync_objects
-        .l_framebuffers
+    const LINKVulkanSwapchainImages* l_swapchain_images = &context->l_sync_objects
         .l_graphics_pipeline
-        .l_render_pass
-        .l_swapchain_images
-        .l_swapchain;
-    const VulkanSwapchain* swapchain = &l_swapchain->vk_swapchain;
+        .l_swapchain_images;
+    const VulkanSwapchainImages* swapchain_images = &l_swapchain_images->swapchain_images;
+    const VulkanSwapchain* swapchain = &l_swapchain_images->l_swapchain.vk_swapchain;
     const VulkanCommands* commands = &context->commands;
     const VulkanSyncObjects* sync_objects = &context->l_sync_objects
         .sync_objects;
-    const VulkanFramebuffers* framebuffers = &context->l_sync_objects
-        .l_framebuffers
-        .vk_framebuffers;
 
     // TODO clean all this shit up, recreate swapchain when I should, and handle using
     // a sub optimal swapchain.
@@ -552,7 +486,7 @@ bool context_draw(Context* context) {
             graphics_pipeline,
             commands,
             sync_objects,
-            framebuffers);
+            swapchain_images);
         if (result == false) {
             printf("FAILED!!!!!!!!\n");
             device_context->vkDeviceWaitIdle(device_context->d_device->logical_device);

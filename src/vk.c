@@ -64,7 +64,7 @@ bool vulkan_init(VulkanInstance* vk, const VulkanCreateInfo* vk_info) {
     SET_INSTANCE_PROC_ADDR(vkDestroyInstance);
     SET_INSTANCE_PROC_ADDR(vkEnumeratePhysicalDevices);
     SET_INSTANCE_PROC_ADDR(vkGetPhysicalDeviceProperties);
-    SET_INSTANCE_PROC_ADDR(vkGetPhysicalDeviceFeatures);
+    SET_INSTANCE_PROC_ADDR(vkGetPhysicalDeviceFeatures2);
     SET_INSTANCE_PROC_ADDR(vkCreateDevice);
     SET_INSTANCE_PROC_ADDR(vkDestroyDevice);
     SET_INSTANCE_PROC_ADDR(vkGetPhysicalDeviceQueueFamilyProperties);
@@ -329,7 +329,12 @@ bool vulkan_device_description_init(
     desc->d_physical_device = physical_device;
 
     vk->vkGetPhysicalDeviceProperties(physical_device, &desc->device_properties);
-    vk->vkGetPhysicalDeviceFeatures(physical_device, &desc->device_features);
+
+    desc->device_vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    desc->device_vk13_features.pNext = NULL;
+    desc->device_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    desc->device_features.pNext = &desc->device_vk13_features;
+    vk->vkGetPhysicalDeviceFeatures2(physical_device, &desc->device_features);
 
     // Queue Family Properties
     vk->vkGetPhysicalDeviceQueueFamilyProperties(
@@ -546,6 +551,16 @@ bool vulkan_device_init(
             continue;
         }
 
+        // Check for dynamic rendering support
+        if (desc->device_vk13_features.dynamicRendering != VK_TRUE) {
+            continue;
+        }
+
+        // Check for synch2 support
+        if (desc->device_vk13_features.synchronization2 != VK_TRUE) {
+            continue;
+        }
+
         // Check for swap chain support support
         if (desc->surface_compat == false) {
             continue;
@@ -613,9 +628,30 @@ bool vulkan_device_init(
         },
     };
 
+    // Enable dynamic rendering & synch2 features
+    const VkPhysicalDeviceVulkan13Features required_device_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = NULL,
+        .robustImageAccess = VK_FALSE,
+        .inlineUniformBlock = VK_FALSE,
+        .descriptorBindingInlineUniformBlockUpdateAfterBind = VK_FALSE,
+        .pipelineCreationCacheControl = VK_FALSE,
+        .privateData = VK_FALSE,
+        .shaderDemoteToHelperInvocation = VK_FALSE,
+        .shaderTerminateInvocation = VK_FALSE,
+        .subgroupSizeControl = VK_FALSE,
+        .computeFullSubgroups = VK_FALSE,
+        .synchronization2 = VK_TRUE, // <--- this guy
+        .textureCompressionASTC_HDR = VK_FALSE,
+        .shaderZeroInitializeWorkgroupMemory = VK_FALSE,
+        .dynamicRendering = VK_TRUE, // <----- and this guy
+        .shaderIntegerDotProduct = VK_FALSE,
+        .maintenance4 = VK_FALSE,
+    };
+
     const VkDeviceCreateInfo device_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = NULL,
+        .pNext = &required_device_features,
         .enabledExtensionCount = REQ_EXT_SIZE,
         .ppEnabledExtensionNames = required_extensions,
         .queueCreateInfoCount = queue_create_info_count,
@@ -652,8 +688,6 @@ bool vulkan_device_context_init(
     SET_DEVICE_PROC_ADDR(vkDestroyImageView);
     SET_DEVICE_PROC_ADDR(vkCreateShaderModule);
     SET_DEVICE_PROC_ADDR(vkDestroyShaderModule);
-    SET_DEVICE_PROC_ADDR(vkCreateRenderPass);
-    SET_DEVICE_PROC_ADDR(vkDestroyRenderPass);
     SET_DEVICE_PROC_ADDR(vkCreatePipelineLayout);
     SET_DEVICE_PROC_ADDR(vkDestroyPipelineLayout);
     SET_DEVICE_PROC_ADDR(vkCreateGraphicsPipelines);
@@ -666,8 +700,8 @@ bool vulkan_device_context_init(
     SET_DEVICE_PROC_ADDR(vkResetCommandBuffer);
     SET_DEVICE_PROC_ADDR(vkBeginCommandBuffer);
     SET_DEVICE_PROC_ADDR(vkEndCommandBuffer);
-    SET_DEVICE_PROC_ADDR(vkCmdBeginRenderPass);
-    SET_DEVICE_PROC_ADDR(vkCmdEndRenderPass);
+    SET_DEVICE_PROC_ADDR(vkCmdBeginRendering);
+    SET_DEVICE_PROC_ADDR(vkCmdEndRendering);
     SET_DEVICE_PROC_ADDR(vkCmdBindPipeline);
     SET_DEVICE_PROC_ADDR(vkCmdSetViewport);
     SET_DEVICE_PROC_ADDR(vkCmdSetScissor);
@@ -682,6 +716,7 @@ bool vulkan_device_context_init(
     SET_DEVICE_PROC_ADDR(vkDestroyFence);
     SET_DEVICE_PROC_ADDR(vkDeviceWaitIdle);
     SET_DEVICE_PROC_ADDR(vkResetFences);
+    SET_DEVICE_PROC_ADDR(vkCmdPipelineBarrier2);
 
     device_context->vkGetDeviceQueue(
         device->logical_device,
@@ -875,7 +910,6 @@ void vulkan_image_view_list_destroy(
     }
 }
 
-
 bool vulkan_swapchain_images_init(
     const VulkanSwapchain* swapchain,
     VulkanSwapchainImages* images)
@@ -925,91 +959,10 @@ void vulkan_swapchain_images_destroy(VulkanSwapchainImages* images) {
     free(images->image_view_list);
 }
 
-bool vulkan_render_pass_init(
-    const VulkanDeviceContext *context,
-    const VulkanSwapchainImages *swapchain_images,
-    VulkanRenderPass* vk_render_pass)
-{
-    vk_render_pass->d_context = context;
-    vk_render_pass->d_swapchain_images = swapchain_images;
-
-    const VkAttachmentDescription attachment = {
-        .format = swapchain_images->d_swapchain->surface_format.format,
-        .samples = 1,
-        .flags = 0,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE, // TODO this is a bug
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-    };
-
-    const VkAttachmentReference attachment_reference = {
-        .attachment = 0,
-        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-    };
-
-    const VkSubpassDescription subpass = {
-        .flags = 0,
-        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &attachment_reference,
-        .pResolveAttachments = NULL,
-        .inputAttachmentCount = 0,
-        .pInputAttachments = NULL,
-        .preserveAttachmentCount = 0,
-        .pPreserveAttachments = NULL,
-        .pDepthStencilAttachment = NULL,
-    };
-
-
-    // TODO use synch2 & dynamic rendering
-    const VkSubpassDependency subpass_dependency = {
-      .dependencyFlags = 0,
-      .srcSubpass = VK_SUBPASS_EXTERNAL,
-      .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      .srcAccessMask = 0,
-      .dstSubpass = 0,
-      .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-    };
-
-    const VkRenderPassCreateInfo create_info = {
-        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .pNext = NULL,
-        .flags = 0,
-        .attachmentCount = 1,
-        .pAttachments = &attachment,
-        .subpassCount = 1,
-        .pSubpasses = &subpass,
-        .dependencyCount = 1,
-        .pDependencies = &subpass_dependency,
-    };
-
-    const VkResult result = context->vkCreateRenderPass(
-        context->d_device->logical_device,
-        &create_info,
-        context->d_device->d_vk->allocator,
-        &vk_render_pass->render_pass);
-
-    return result == VK_SUCCESS;
-}
-
-void vulkan_render_pass_destroy(
-    VulkanRenderPass* render_pass)
-{
-    const VulkanDeviceContext* context = render_pass->d_context;
-    context->vkDestroyRenderPass(
-        context->d_device->logical_device,
-        render_pass->render_pass,
-        context->d_device->d_vk->allocator);
-}
-
 bool vulkan_graphics_pipeline_init(
     const VulkanDeviceContext* context,
     const VulkanShaders* shaders,
-    const VulkanRenderPass* vk_render_pass,
+    const VulkanSwapchain* swapchain,
     VulkanGraphicsPipeline* graphics_pipeline) {
 
     graphics_pipeline->d_context = context;
@@ -1144,9 +1097,19 @@ bool vulkan_graphics_pipeline_init(
         .pAttachments = &colour_blend_attachment_state,
     };
 
+    const VkPipelineRenderingCreateInfo pipeline_rendering_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .pNext = NULL,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &swapchain->surface_format.format,
+        .depthAttachmentFormat = VK_FORMAT_UNDEFINED,
+        .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+        .viewMask = 0,
+    };
+
     VkGraphicsPipelineCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .pNext = NULL,
+        .pNext = &pipeline_rendering_create_info,
         .stageCount = 2,
         .pStages = shader_create_infos,
         .pColorBlendState = &colour_blend_info,
@@ -1158,7 +1121,7 @@ bool vulkan_graphics_pipeline_init(
         .pRasterizationState = &rasterization_state_create_info,
         .pViewportState = &viewport_state_create_info,
         .pTessellationState = NULL,
-        .renderPass = vk_render_pass->render_pass,
+        .renderPass = VK_NULL_HANDLE,
         .subpass = 0,
         .layout = graphics_pipeline->pipeline_layout,
         .basePipelineHandle = NULL,
@@ -1187,72 +1150,6 @@ void vulkan_graphics_pipeline_destroy(
         context->d_device->logical_device,
         graphics_pipeline->pipeline_layout, 
         context->d_device->d_vk->allocator);
-}
-
-bool vulkan_framebuffers_init(
-    const VulkanRenderPass* render_pass,
-    VulkanFramebuffers* vk_framebuffers)
-{
-    const VulkanDeviceContext* context = render_pass->d_context;
-    const VulkanSwapchainImages* swapchain_images = render_pass->d_swapchain_images;
-    const uint32_t image_count = swapchain_images->image_count;
-    vk_framebuffers->d_swapchain_images = swapchain_images;
-    vk_framebuffers->d_render_pass = render_pass;
-    vk_framebuffers->d_context = context;
-    vk_framebuffers->framebuffer_count = 0;
-
-    const VkExtent2D image_extent = swapchain_images->d_swapchain->image_extent;
-
-    for (uint32_t i = 0; i < image_count; i++) {
-        VkImageView image_view = swapchain_images->image_view_list[i];
-
-        const VkFramebufferCreateInfo create_info = {
-            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .pNext = NULL,
-            .flags = 0,
-            .renderPass = render_pass->render_pass,
-            .attachmentCount = 1,
-            .pAttachments = &image_view,
-            .width = image_extent.width,
-            .height = image_extent.height,
-            .layers = 1,
-        };
-
-        // Question: why do width, height, layers need to be specified
-        // when the image view should maintain that information already?
-        // What happens if they disagree?
-
-        const VkResult result = context->vkCreateFramebuffer(
-            context->d_device->logical_device,
-            &create_info,
-            context->d_device->d_vk->allocator,
-            vk_framebuffers->framebuffers + i);
-            
-        if (result != VK_SUCCESS) {
-            // Destroy previously created framebuffers up to framebuffer count
-            vulkan_framebuffers_destroy(vk_framebuffers);
-            return false;
-        }
-        else {
-            vk_framebuffers->framebuffer_count += 1;
-        }
-    }
-
-    return true;
-}
-
-void vulkan_framebuffers_destroy(VulkanFramebuffers* vk_framebuffers)
-{
-    const PFN_vkDestroyFramebuffer vkDestroyFramebuffer =
-        vk_framebuffers->
-        d_context->
-        vkDestroyFramebuffer;
-    for (uint32_t i = 0; i < vk_framebuffers->framebuffer_count; i++) {
-        vkDestroyFramebuffer(
-            vk_framebuffers->d_context->d_device->logical_device,
-            vk_framebuffers->framebuffers[i],
-            vk_framebuffers->d_context->d_device->d_vk->allocator);
-    }
 }
 
 void vulkan_commands_destroy(
@@ -1410,6 +1307,57 @@ void vulkan_sync_objects_destroy(
 
 }
 
+// Adds an image memory barrier to transition from old_layout to new_layout
+void vulkan_cmd_transition_image_layout(
+    const VulkanDeviceContext* context,
+    VkCommandBuffer command_buffer,
+    VkImage image,
+    VkImageLayout old_layout,
+    VkImageLayout new_layout,
+    VkPipelineStageFlags2 src_stage_mask,
+    VkAccessFlags2 src_access_mask,
+    VkPipelineStageFlags2 dst_stage_mask,
+    VkAccessFlags2 dst_access_mask)
+{
+    // TODO define constant for this subresource range to avoid dupe?
+    const VkImageSubresourceRange colour_subresource_range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+    };
+
+    const VkImageMemoryBarrier2 image_memory_barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .pNext = NULL,
+        .srcStageMask = src_stage_mask,
+        .srcAccessMask = src_access_mask,
+        .dstStageMask = dst_stage_mask,
+        .dstAccessMask = dst_access_mask,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = colour_subresource_range,
+    };
+
+    const VkDependencyInfo dependency_info = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pNext = NULL,
+        .dependencyFlags = 0,
+        .memoryBarrierCount = 0,
+        .pMemoryBarriers = NULL,
+        .bufferMemoryBarrierCount = 0,
+        .pBufferMemoryBarriers = NULL,
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &image_memory_barrier,
+    };
+
+    context->vkCmdPipelineBarrier2(command_buffer, &dependency_info);
+
+}
 
 bool vulkan_draw_mutate(
     const VulkanDeviceContext* context,
@@ -1417,7 +1365,7 @@ bool vulkan_draw_mutate(
     const VulkanGraphicsPipeline* vk_graphics_pipeline,
     const VulkanCommands* commands,
     const VulkanSyncObjects* sync,
-    const VulkanFramebuffers* framebuffers)
+    const VulkanSwapchainImages* images)
 {
     VkResult result;
     // Wait for available command buffer
@@ -1462,22 +1410,57 @@ bool vulkan_draw_mutate(
     };
     context->vkBeginCommandBuffer(command_buffer, &begin_info);
     {
+        // TODO this can be specified inside of a render pass, should it be? why not?
+        // Transition to optimal layout for colour attachments
+        vulkan_cmd_transition_image_layout(
+            context,
+            command_buffer,
+            images->d_images[image_index],
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,             // src_stage_mask, transition can occur immediately so top of pipe
+            0,                                               // src_access_mask, transition can occur immediately
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, // dst_stage_mask, operations in colour output stage must happen after transition
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);         // dst_access_mask, write operations must wait for transition
+
+        // Begin render pass using dynamic rendering (vkCmdBeginRendering)
         VkClearValue clear_value = {
             .color = { .int32 = {0, 0, 0, 0} },
         };
-        const VkRenderPassBeginInfo render_begin_info = {
-            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+
+        const VkRenderingAttachmentInfo colour_attachment_info = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .pNext = NULL,
-            .renderPass = framebuffers->d_render_pass->render_pass,
-            .renderArea = { .extent = vk_swapchain->image_extent },
-            .framebuffer = framebuffers->framebuffers[image_index],
-            .clearValueCount = 1,
-            .pClearValues = &clear_value, 
+            .imageView = images->image_view_list[image_index],
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .resolveMode = VK_RESOLVE_MODE_NONE,
+            .resolveImageView = VK_NULL_HANDLE,
+            .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = clear_value,
         };
-        context->vkCmdBeginRenderPass(
+
+        const VkRenderingInfo rendering_info = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .pNext = NULL,
+            .flags = 0,
+            .renderArea = {
+                .extent = vk_swapchain->image_extent,
+                .offset = { .x = 0, .y = 0 }
+            },
+            .layerCount = 1,
+            .viewMask = 0,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colour_attachment_info,
+            .pDepthAttachment = NULL,
+            .pStencilAttachment = NULL,
+        };
+
+        context->vkCmdBeginRendering(
             command_buffer,
-            &render_begin_info,
-            VK_SUBPASS_CONTENTS_INLINE);
+            &rendering_info);
+
 
         context->vkCmdBindPipeline(
             command_buffer,
@@ -1516,13 +1499,27 @@ bool vulkan_draw_mutate(
             0,  // firstVertex
             0); // firstInstance
 
-        context->vkCmdEndRenderPass(command_buffer);
+        context->vkCmdEndRendering(command_buffer);
+
+        // Transition to PRESENT_SRC_KHR at the end of rendering
+        vulkan_cmd_transition_image_layout(
+            context,
+            command_buffer,
+            images->d_images[image_index],
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, // src_stage_mask, transition must come before colour attachment output (writes)
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,          // src_access_mask, transition must come before colour attachment writes
+            VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,          // dst_stage_mask, no need to transition before any specific operations
+            0);                                              // dst_access_mask, no need to transition before any specific oerations
+
     }
     context->vkEndCommandBuffer(command_buffer);
 
     // Submission
 
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // Make rendering operations wait for image availability
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     const VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = NULL,
@@ -1534,6 +1531,7 @@ bool vulkan_draw_mutate(
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &sync->draw_finished[0],
     };
+    // TODO look into vkQueueSubmit2
     result = context->vkQueueSubmit(
         context->d_graphics_queue,
         1,
@@ -1568,3 +1566,4 @@ bool vulkan_draw_mutate(
 
     return true;
 }
+
